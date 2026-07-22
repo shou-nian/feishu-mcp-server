@@ -3,9 +3,9 @@
 import re
 from typing import Any
 
-from feishu_mcp.feishu.client import FeishuClient
-from feishu_mcp.feishu.errors import FeishuAPIError
-from feishu_mcp.models.schemas import CreateDocumentResult, DocumentResult, UpdateDocumentResult
+from src.feishu.client import FeishuClient
+from src.feishu.errors import FeishuAPIError
+from src.models.schemas import CreateDocumentResult, DocumentResult, UpdateDocumentResult
 
 DOCUMENTS_PATH = "/open-apis/docx/v1/documents"
 BLOCK_PAGE_SIZE = 500

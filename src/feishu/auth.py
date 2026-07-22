@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from feishu_mcp.feishu.errors import FeishuAuthError
+from src.feishu.errors import FeishuAuthError
 
 TENANT_ACCESS_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal"
 
