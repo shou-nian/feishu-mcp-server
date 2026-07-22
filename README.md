@@ -41,18 +41,18 @@ uv sync
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，至少填写：
+复制 `.env.example` 为 `.env`，填写以下必需变量：
 
 ```dotenv
 FEISHU_APP_ID=cli_xxxxx
 FEISHU_APP_SECRET=xxxxx
+FEISHU_BASE_URL=https://open.feishu.cn
 ```
 
 可选变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `FEISHU_BASE_URL` | `https://open.feishu.cn` | 飞书开放平台 API 地址 |
 | `FEISHU_DOCUMENT_URL_BASE` | `https://feishu.cn/docx` | 创建结果中的文档 URL 前缀；私有化域名可覆盖 |
 | `FEISHU_REQUEST_TIMEOUT` | `15` | HTTP 超时秒数 |
 | `LOG_LEVEL` | `INFO` | stderr 日志级别 |
@@ -62,8 +62,10 @@ FEISHU_APP_SECRET=xxxxx
 ## 启动
 
 ```bash
-uv run python -m src.main
+uv run python main.py
 ```
+
+根目录 `main.py` 是推荐启动入口；`uv run python -m src.main` 仍可兼容使用。
 
 Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的 stdout。stdin 正常关闭、任务取消，或进程收到 `SIGINT`/`SIGTERM` 时，Server 会取消服务任务、退出 MCP 生命周期并关闭 HTTP 连接池。
 
@@ -79,12 +81,12 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
     "feishu": {
       "command": "python",
       "args": [
-        "-m",
-        "src.main"
+        "main.py"
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx"
+        "FEISHU_APP_SECRET": "xxxxx",
+        "FEISHU_BASE_URL": "https://open.feishu.cn"
       }
     }
   }
@@ -103,12 +105,12 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
         "D:\\project\\feishu-mcp-server",
         "run",
         "python",
-        "-m",
-        "src.main"
+        "main.py"
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx"
+        "FEISHU_APP_SECRET": "xxxxx",
+        "FEISHU_BASE_URL": "https://open.feishu.cn"
       }
     }
   }
@@ -127,8 +129,9 @@ uv run ruff check src tests
 ## 项目结构
 
 ```text
+main.py                  # 项目根目录推荐启动入口
 src/
-├── main.py              # stdio 入口和优雅退出
+├── main.py              # stdio 生命周期和优雅退出
 ├── config/settings.py   # 环境变量配置
 ├── feishu/
 │   ├── auth.py          # tenant_access_token 缓存与刷新
