@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from src.config.settings import Settings
+from feishu_mcp.config.settings import Settings
 
 
 def test_feishu_base_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:

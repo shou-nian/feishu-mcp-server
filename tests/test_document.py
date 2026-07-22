@@ -3,7 +3,11 @@
 import asyncio
 from typing import Any
 
-from src.feishu.document import FeishuDocumentService, blocks_to_markdown, markdown_to_blocks
+from feishu_mcp.feishu.document import (
+    FeishuDocumentService,
+    blocks_to_markdown,
+    markdown_to_blocks,
+)
 
 
 class FakeFeishuClient:

@@ -62,10 +62,10 @@ FEISHU_BASE_URL=https://open.feishu.cn
 ## 启动
 
 ```bash
-uv run python main.py
+uv run feishu-mcp
 ```
 
-根目录 `main.py` 是推荐启动入口；`uv run python -m src.main` 仍可兼容使用。
+`feishu-mcp` 是通过 `project.scripts` 安装的推荐入口。根目录入口 `uv run python main.py` 仍可兼容使用。
 
 Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的 stdout。stdin 正常关闭、任务取消，或进程收到 `SIGINT`/`SIGTERM` 时，Server 会取消服务任务、退出 MCP 生命周期并关闭 HTTP 连接池。
 
@@ -73,15 +73,18 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
 
 ## Codex MCP 配置示例
 
-在已经执行过 `uv sync` 且 Python 指向项目虚拟环境时，可以使用：
+推荐让 Codex 直接通过 uv 启动已安装的 `feishu-mcp` 命令：
 
 ```json
 {
   "mcpServers": {
     "feishu": {
-      "command": "python",
+      "command": "uv",
       "args": [
-        "main.py"
+        "--directory",
+        "D:\\project\\feishu-mcp-server",
+        "run",
+        "feishu-mcp"
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
@@ -93,7 +96,7 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
 }
 ```
 
-如果 Codex 启动时的工作目录不是本项目，可直接通过 `uv --directory` 指定项目目录（Windows JSON 路径中的反斜杠需要转义）：
+如果 Codex 已经在项目根目录运行，也可以省略 `--directory`：
 
 ```json
 {
@@ -101,11 +104,8 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
     "feishu": {
       "command": "uv",
       "args": [
-        "--directory",
-        "D:\\project\\feishu-mcp-server",
         "run",
-        "python",
-        "main.py"
+        "feishu-mcp"
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
@@ -129,16 +129,18 @@ uv run ruff check src tests
 ## 项目结构
 
 ```text
-main.py                  # 项目根目录推荐启动入口
+main.py                          # 兼容的项目根目录入口
 src/
-├── main.py              # stdio 生命周期和优雅退出
-├── config/settings.py   # 环境变量配置
-├── feishu/
-│   ├── auth.py          # tenant_access_token 缓存与刷新
-│   ├── client.py        # 统一异步 HTTP Client
-│   ├── document.py      # Docx 业务与 Markdown 转换
-│   └── errors.py        # 用户友好的异常
-├── mcp/tools.py         # MCP Tools 注册
-├── models/schemas.py    # 结构化响应模型
-└── utils/logger.py      # stderr 日志
+└── feishu_mcp/                  # 可安装的 Python 包
+    ├── __init__.py              # feishu-mcp console script 入口
+    ├── main.py                  # stdio 生命周期和优雅退出
+    ├── config/settings.py       # 环境变量配置
+    ├── feishu/
+    │   ├── auth.py              # tenant_access_token 缓存与刷新
+    │   ├── client.py            # 统一异步 HTTP Client
+    │   ├── document.py          # Docx 业务与 Markdown 转换
+    │   └── errors.py            # 用户友好的异常
+    ├── tools/tools.py           # MCP Tools 注册（避免与官方 mcp 包冲突）
+    ├── models/schemas.py        # 结构化响应模型
+    └── utils/logger.py          # stderr 日志
 ```

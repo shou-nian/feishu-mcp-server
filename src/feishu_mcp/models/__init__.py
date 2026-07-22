@@ -1,6 +1,6 @@
 """公共数据模型。"""
 
-from src.models.schemas import (
+from feishu_mcp.models.schemas import (
     CreateDocumentResult,
     DocumentResult,
     UpdateDocumentResult,

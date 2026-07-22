@@ -4,9 +4,9 @@ from typing import Any
 
 import httpx
 
-from src.config.settings import Settings
-from src.feishu.auth import FeishuAuth
-from src.feishu.errors import FeishuAPIError
+from feishu_mcp.config.settings import Settings
+from feishu_mcp.feishu.auth import FeishuAuth
+from feishu_mcp.feishu.errors import FeishuAPIError
 
 AUTH_ERROR_CODES = {99991661, 99991663, 99991664, 99991668}
 ERROR_MESSAGES = {

@@ -5,9 +5,9 @@ import asyncio
 import httpx
 import pytest
 
-from src.feishu.auth import FeishuAuth
-from src.feishu.client import FeishuClient
-from src.feishu.errors import FeishuAuthError
+from feishu_mcp.feishu.auth import FeishuAuth
+from feishu_mcp.feishu.client import FeishuClient
+from feishu_mcp.feishu.errors import FeishuAuthError
 
 
 class Clock:

@@ -6,10 +6,10 @@ from typing import Any
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from src.feishu.errors import FeishuAPIError
-from src.main import run_server
-from src.mcp.tools import create_mcp_server
-from src.models.schemas import CreateDocumentResult, DocumentResult, UpdateDocumentResult
+from feishu_mcp.feishu.errors import FeishuAPIError
+from feishu_mcp.main import run_server
+from feishu_mcp.models.schemas import CreateDocumentResult, DocumentResult, UpdateDocumentResult
+from feishu_mcp.tools import create_mcp_server
 
 
 class FakeDocumentService:

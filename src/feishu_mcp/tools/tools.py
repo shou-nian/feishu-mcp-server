@@ -10,10 +10,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from src.config.settings import Settings, get_settings
-from src.feishu.client import FeishuClient
-from src.feishu.document import FeishuDocumentService
-from src.feishu.errors import FeishuError
+from feishu_mcp.config.settings import Settings, get_settings
+from feishu_mcp.feishu.client import FeishuClient
+from feishu_mcp.feishu.document import FeishuDocumentService
+from feishu_mcp.feishu.errors import FeishuError
 
 LOGGER = logging.getLogger(__name__)
 

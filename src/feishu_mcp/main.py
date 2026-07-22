@@ -9,9 +9,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import ValidationError
 
-from src.config.settings import get_settings
-from src.mcp.tools import mcp
-from src.utils.logger import configure_logging
+from feishu_mcp.config.settings import get_settings
+from feishu_mcp.tools import mcp
+from feishu_mcp.utils.logger import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_SIGNALS = tuple(
