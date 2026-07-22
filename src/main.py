@@ -6,12 +6,12 @@ import signal
 from types import FrameType
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from feishu_mcp.tools import FastMCP
 from pydantic import ValidationError
 
-from src.config.settings import get_settings
-from src.mcp.tools import mcp
-from src.utils.logger import configure_logging
+from feishu_mcp.config import get_settings
+from feishu_mcp.tools import mcp
+from feishu_mcp.utils import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_SIGNALS = tuple(
@@ -47,8 +47,8 @@ async def run_server(
                 signal.signal(sig, request_shutdown)
                 restore_handlers.append((sig, previous))
 
-    server_task = asyncio.create_task(server.run_stdio_async(), name="mcp-stdio-server")
-    stop_task = asyncio.create_task(stop_event.wait(), name="mcp-shutdown-waiter")
+    server_task = asyncio.create_task(server.run_stdio_async(), name="tools-stdio-server")
+    stop_task = asyncio.create_task(stop_event.wait(), name="tools-shutdown-waiter")
     try:
         done, _ = await asyncio.wait(
             {server_task, stop_task},

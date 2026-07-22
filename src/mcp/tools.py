@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from tools.server.fastmcp import FastMCP
+from tools.server.fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from src.config.settings import Settings, get_settings

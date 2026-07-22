@@ -1,5 +1,5 @@
 """应用配置。"""
 
-from src.config.settings import Settings, get_settings
+from feishu_mcp.config.settings import Settings, get_settings
 
 __all__ = ["Settings", "get_settings"]

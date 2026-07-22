@@ -18,6 +18,12 @@ dev = [
     "ruff>=0.15.22",
 ]
 
+[project.scripts]
+feishu-mcp = "main:main"
+
+[tool.uv]
+package = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
