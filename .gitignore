@@ -8,6 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+.env
+.pytest_cache/
+.ruff_cache/
 
 # Pycharm files
 .idea

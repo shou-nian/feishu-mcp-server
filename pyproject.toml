@@ -1,14 +1,26 @@
 [project]
 name = "feishu-mcp-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "基于 MCP 协议的异步飞书文档服务"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.28.1",
+    "pydantic>=2.12.5",
     "pydantic-settings>=2.14.2",
-    "pytest>=9.1.1",
     "python-dotenv>=1.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
     "ruff>=0.15.22",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
