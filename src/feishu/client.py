@@ -51,9 +51,10 @@ class FeishuClient:
     async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
         """调用飞书 API，成功时返回响应中的 data 对象。"""
 
+        request_headers = dict(kwargs.pop("headers", {}))
         for attempt in range(2):
             token = await self.auth.get_token(force_refresh=attempt > 0)
-            headers = dict(kwargs.pop("headers", {}))
+            headers = dict(request_headers)
             headers["Authorization"] = f"Bearer {token}"
 
             try:

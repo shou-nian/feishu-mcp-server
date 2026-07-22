@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from src.feishu.auth import FeishuAuth
+from src.feishu.client import FeishuClient
 from src.feishu.errors import FeishuAuthError
 
 
@@ -82,3 +83,37 @@ def test_auth_error_is_user_friendly() -> None:
 
     with pytest.raises(FeishuAuthError, match="请检查 FEISHU_APP_ID"):
         asyncio.run(scenario())
+
+
+def test_client_refreshes_token_and_retries_once() -> None:
+    auth_calls = 0
+    api_tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal auth_calls
+        if request.url.path.endswith("/tenant_access_token/internal"):
+            auth_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "tenant_access_token": f"token-{auth_calls}",
+                    "expire": 7200,
+                },
+            )
+        api_tokens.append(request.headers["Authorization"])
+        if len(api_tokens) == 1:
+            return httpx.Response(200, json={"code": 99991668, "msg": "token expired"})
+        return httpx.Response(200, json={"code": 0, "data": {"ok": True}})
+
+    async def scenario() -> dict[str, object]:
+        async with httpx.AsyncClient(
+            base_url="https://open.feishu.cn",
+            transport=httpx.MockTransport(handler),
+        ) as http_client:
+            client = FeishuClient("cli_test", "secret", http_client=http_client)
+            return await client.request("GET", "/open-apis/docx/v1/documents/doc1")
+
+    assert asyncio.run(scenario()) == {"ok": True}
+    assert auth_calls == 2
+    assert api_tokens == ["Bearer token-1", "Bearer token-2"]

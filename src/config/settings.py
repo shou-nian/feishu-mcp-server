@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     feishu_app_id: str = Field(min_length=1, validation_alias="FEISHU_APP_ID")
-    feishu_app_secret: SecretStr = Field(validation_alias="FEISHU_APP_SECRET")
+    feishu_app_secret: SecretStr = Field(min_length=1, validation_alias="FEISHU_APP_SECRET")
     feishu_base_url: str = Field(
         default="https://open.feishu.cn",
         validation_alias="FEISHU_BASE_URL",
