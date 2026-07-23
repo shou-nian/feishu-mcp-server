@@ -1,15 +1,17 @@
 # 飞书 MCP Server
 
-一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书文档 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，通过飞书开放平台 Docx API 读取、创建和更新文档。
+一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写以及 Bitable（多维表格）字段查询和记录新增。
 
 ## 功能与设计
 
-Server 暴露四个 Tool：
+Server 暴露六个 Tool：
 
 - `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
 - `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
 - `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown（含表格）全量替换。
 - `append_feishu_document(document_id, content)`：在已有文档末尾追加普通文本、Markdown 或表格，不删除或改写现有内容。
+- `list_feishu_bitable_fields(app_token, table_id)`：分页查询多维表格字段、类型、选项和是否可写。
+- `create_feishu_bitable_record(app_token, table_id, fields)`：读取实时字段结构，校验并转换字段值后新增记录。
 
 追加 Tool 的输入示例：
 
@@ -30,6 +32,8 @@ Server 暴露四个 Tool：
 - `POST /open-apis/docx/v1/documents`：创建文档。
 - `POST /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children`：写入 blocks。
 - `DELETE /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children/batch_delete`：删除旧正文。
+- `GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields`：分页查询 Bitable 字段结构。
+- `POST /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records`：新增 Bitable 记录。
 
 鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。应用凭证、Token 获取与缓存、API 请求序列化均由飞书官方 `lark-oapi` SDK 管理；业务代码调用 SDK 提供的 `aget`、`alist`、`acreate`、`abatch_delete` 等原生异步接口，不再自行发送 HTTP 请求。
 
@@ -45,6 +49,62 @@ Server 暴露四个 Tool：
 
 写入时第一行会作为飞书表格表头；`<br>` 会在单元格内转换为换行。读取飞书表格时会根据 table block 的行列属性、cell IDs 和单元格子 blocks 重建 Markdown。Markdown 本身不能完整表达合并单元格、精确列宽或复杂嵌套 block，这些信息仍保留在 Tool 返回的原始 `blocks` 字段中。
 
+## Bitable 字段与记录
+
+Docx 表格是文档内的排版 block，Bitable 是具有字段 schema 和记录的独立多维表格。`append_feishu_document` 只能追加前者；修改多维表格必须使用 Bitable Tools。
+
+Bitable 地址通常类似：
+
+```text
+https://example.feishu.cn/base/{app_token}?table={table_id}
+```
+
+建议先查询字段：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx"
+}
+```
+
+`list_feishu_bitable_fields` 会返回 `field_id`、`field_name`、数字类型、可读类型名、`ui_type`、选择项、原始 property 以及 `writable`。新增记录可以使用字段名称或 `field_id` 作为 key；服务会重新读取最新 schema，最终按字段名称调用官方 API：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx",
+  "fields": {
+    "标题": "新任务",
+    "数量": 3,
+    "状态": "进行中",
+    "标签": ["重要"],
+    "日期": "2026-07-23T10:00:00+08:00",
+    "完成": false,
+    "负责人": "ou_xxxxxxxxx",
+    "链接": "https://example.com"
+  }
+}
+```
+
+常用字段值格式：
+
+| 字段类型 | 输入格式 |
+| --- | --- |
+| 文本、电话 | 字符串 |
+| 数字 | `int` 或 `float`，不接受布尔值 |
+| 单选 | 已存在的选项名称字符串 |
+| 多选 | 已存在的选项名称数组 |
+| 日期 | 毫秒时间戳或 ISO 8601 字符串；无时区字符串按 UTC 处理 |
+| 复选框 | 布尔值 |
+| 人员、群组 | ID 字符串、`{"id": "..."}` 或对应数组 |
+| 超链接 | URL 字符串或 `{"link": "...", "text": "..."}` |
+| 附件 | `[{"file_token": "..."}]` |
+| 单向/双向关联 | 关联记录 ID 数组 |
+| 地理位置 | 飞书 API 要求的地理位置对象 |
+
+公式、查找引用、创建/修改时间、创建/修改人和自动编号属于只读字段，新增记录时会被拒绝。单选和多选值必须已经存在于字段选项中；未知字段、错误类型和空字段对象都会在调用新增记录 API 前返回清晰错误。
+
 ## 环境准备
 
 要求：
@@ -59,7 +119,7 @@ Server 暴露四个 Tool：
 uv sync
 ```
 
-飞书应用需要开通与 Docx 文档读取、创建、编辑相关的权限，并发布可用版本。要读取或更新已有文档，还需要确保应用对目标文档具有访问权限。
+飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取、记录新增相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
 
 ## 配置
 
@@ -142,10 +202,10 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
 
 ```bash
 uv run pytest
-uv run ruff check src tests
+uv run ruff check main.py src tests
 ```
 
-测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 MCP Tool 注册、参数校验、错误转换和优雅退出。追加测试还会确认没有删除调用，且已有表格的嵌套 blocks 不会影响根节点末尾索引。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、字段类型规范化、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
 
 ## 项目结构
 
@@ -158,8 +218,9 @@ src/
     ├── config/settings.py       # 环境变量配置
     ├── feishu/
     │   ├── auth.py              # lark-oapi Client 与应用鉴权配置
-    │   ├── client.py            # 官方 SDK Docx 异步接口封装
+    │   ├── client.py            # 官方 SDK Docx/Bitable 异步接口封装
     │   ├── document.py          # Docx 业务、Markdown 与表格转换
+    │   ├── bitable.py           # Bitable schema、值校验与记录新增
     │   └── errors.py            # 用户友好的异常
     ├── tools/tools.py           # MCP Tools 注册（避免与官方 mcp 包冲突）
     ├── models/schemas.py        # 结构化响应模型

@@ -35,3 +35,35 @@ class AppendDocumentResult(BaseModel):
     document_id: str
     appended: bool
     block_count: int = Field(ge=0)
+
+
+class BitableFieldSchema(BaseModel):
+    """Bitable 字段结构。"""
+
+    field_id: str
+    field_name: str
+    type: int
+    type_name: str
+    ui_type: str | None = None
+    is_primary: bool = False
+    is_hidden: bool = False
+    writable: bool
+    options: list[str] = Field(default_factory=list)
+    property: dict[str, Any] = Field(default_factory=dict)
+
+
+class BitableFieldsResult(BaseModel):
+    """Bitable 字段查询结果。"""
+
+    app_token: str
+    table_id: str
+    fields: list[BitableFieldSchema]
+
+
+class BitableRecordResult(BaseModel):
+    """Bitable 新增记录结果。"""
+
+    app_token: str
+    table_id: str
+    record_id: str
+    fields: dict[str, Any]

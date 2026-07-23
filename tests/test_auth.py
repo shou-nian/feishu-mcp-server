@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from lark_oapi.api.bitable.v1 import AppTableFieldForList, AppTableRecord
 from lark_oapi.api.docx.v1 import Block, Document, Text
 from lark_oapi.core.exception import ObtainAccessTokenException
 
@@ -27,6 +28,8 @@ def _sdk_client(**methods: AsyncMock) -> SimpleNamespace:
         acreate=methods.get("create_children", AsyncMock()),
         abatch_delete=methods.get("delete_children", AsyncMock()),
     )
+    app_table_field = SimpleNamespace(alist=methods.get("list_bitable_fields", AsyncMock()))
+    app_table_record = SimpleNamespace(acreate=methods.get("create_bitable_record", AsyncMock()))
     return SimpleNamespace(
         docx=SimpleNamespace(
             v1=SimpleNamespace(
@@ -34,7 +37,13 @@ def _sdk_client(**methods: AsyncMock) -> SimpleNamespace:
                 document_block=document_block,
                 document_block_children=document_block_children,
             )
-        )
+        ),
+        bitable=SimpleNamespace(
+            v1=SimpleNamespace(
+                app_table_field=app_table_field,
+                app_table_record=app_table_record,
+            )
+        ),
     )
 
 
@@ -117,6 +126,45 @@ def test_create_and_delete_children_use_sdk_async_api() -> None:
     delete_request = delete_call.await_args.args[0]
     assert delete_request.request_body.start_index == 0
     assert delete_request.request_body.end_index == 1
+
+
+def test_bitable_field_and_record_methods_use_sdk_async_api() -> None:
+    field = (
+        AppTableFieldForList.builder()
+        .field_id("fld1")
+        .field_name("标题")
+        .type(1)
+        .build()
+    )
+    list_call = AsyncMock(
+        return_value=_response(SimpleNamespace(items=[field], has_more=False, page_token=None))
+    )
+    record = AppTableRecord.builder().record_id("rec1").fields({"标题": "内容"}).build()
+    create_call = AsyncMock(return_value=_response(SimpleNamespace(record=record)))
+    client = FeishuClient(  # type: ignore[arg-type]
+        _sdk_client(
+            list_bitable_fields=list_call,
+            create_bitable_record=create_call,
+        )
+    )
+
+    fields, has_more, page_token = asyncio.run(
+        client.list_bitable_fields("app1", "tbl1", page_size=100)
+    )
+    created = asyncio.run(
+        client.create_bitable_record("app1", "tbl1", {"标题": "内容"})
+    )
+
+    assert fields == [field]
+    assert has_more is False
+    assert page_token is None
+    list_request = list_call.await_args.args[0]
+    assert list_request.app_token == "app1"
+    assert list_request.table_id == "tbl1"
+    assert list_request.page_size == 100
+    assert created.record_id == "rec1"
+    create_request = create_call.await_args.args[0]
+    assert create_request.request_body.fields == {"标题": "内容"}
 
 
 def test_sdk_auth_error_is_user_friendly() -> None:

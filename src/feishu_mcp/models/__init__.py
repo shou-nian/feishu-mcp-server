@@ -2,6 +2,9 @@
 
 from feishu_mcp.models.schemas import (
     AppendDocumentResult,
+    BitableFieldSchema,
+    BitableFieldsResult,
+    BitableRecordResult,
     CreateDocumentResult,
     DocumentResult,
     UpdateDocumentResult,
@@ -9,6 +12,9 @@ from feishu_mcp.models.schemas import (
 
 __all__ = [
     "AppendDocumentResult",
+    "BitableFieldSchema",
+    "BitableFieldsResult",
+    "BitableRecordResult",
     "CreateDocumentResult",
     "DocumentResult",
     "UpdateDocumentResult",

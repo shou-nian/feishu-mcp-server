@@ -19,3 +19,7 @@ class FeishuAPIError(FeishuError):
 
 class FeishuConfigurationError(FeishuError):
     """服务端配置不完整或不合法。"""
+
+
+class BitableValidationError(FeishuError):
+    """Bitable 字段或记录值不符合表结构。"""

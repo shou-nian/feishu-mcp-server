@@ -1,9 +1,15 @@
-"""基于飞书官方 lark-oapi SDK 的异步 Docx Client。"""
+"""基于飞书官方 lark-oapi SDK 的异步 Docx/Bitable Client。"""
 
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 import lark_oapi as lark
+from lark_oapi.api.bitable.v1 import (
+    AppTableFieldForList,
+    AppTableRecord,
+    CreateAppTableRecordRequest,
+    ListAppTableFieldRequest,
+)
 from lark_oapi.api.docx.v1 import (
     BatchDeleteDocumentBlockChildrenRequest,
     BatchDeleteDocumentBlockChildrenRequestBody,
@@ -44,7 +50,7 @@ ResponseT = TypeVar("ResponseT")
 
 
 class FeishuClient:
-    """对官方 SDK Docx v1 异步接口的业务友好封装。"""
+    """对官方 SDK Docx/Bitable v1 异步接口的业务友好封装。"""
 
     def __init__(self, sdk_client: lark.Client) -> None:
         self._sdk_client = sdk_client
@@ -146,6 +152,55 @@ class FeishuClient:
         await self._call(
             lambda: self._sdk_client.docx.v1.document_block_children.abatch_delete(request)
         )
+
+    async def list_bitable_fields(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> tuple[list[AppTableFieldForList], bool, str | None]:
+        builder = (
+            ListAppTableFieldRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .page_size(page_size)
+        )
+        if page_token:
+            builder.page_token(page_token)
+        request = builder.build()
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_field.alist(request)
+        )
+        items = getattr(data, "items", None) or []
+        if not isinstance(items, list) or any(
+            not isinstance(item, AppTableFieldForList) for item in items
+        ):
+            raise FeishuAPIError("飞书 Bitable 字段响应格式不正确")
+        return items, bool(getattr(data, "has_more", False)), getattr(data, "page_token", None)
+
+    async def create_bitable_record(
+        self,
+        app_token: str,
+        table_id: str,
+        fields: dict[str, Any],
+    ) -> AppTableRecord:
+        record = AppTableRecord.builder().fields(fields).build()
+        request = (
+            CreateAppTableRecordRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .request_body(record)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_record.acreate(request)
+        )
+        created = getattr(data, "record", None)
+        if not isinstance(created, AppTableRecord):
+            raise FeishuAPIError("飞书新增 Bitable 记录成功，但响应中缺少 record")
+        return created
 
     async def _call(self, operation: Callable[[], Awaitable[ResponseT]]) -> Any:
         try:
