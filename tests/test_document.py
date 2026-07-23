@@ -211,6 +211,71 @@ def test_update_document_replaces_root_children() -> None:
     assert delete_call[2] == {"start_index": 0, "end_index": 1}
 
 
+def test_append_document_preserves_existing_content_and_appends_table() -> None:
+    client = FakeFeishuClient()
+    existing_table = (
+        Block.builder()
+        .block_id("old-table")
+        .parent_id("doc1")
+        .block_type(TABLE_BLOCK_TYPE)
+        .table(
+            Table.builder()
+            .property(TableProperty.builder().row_size(1).column_size(1).build())
+            .cells(["old-cell"])
+            .build()
+        )
+        .build()
+    )
+    client.block_pages = [
+        (
+            [
+                Block.builder().block_id("doc1").block_type(1).build(),
+                _text_block("old-text", "doc1", "已有正文"),
+                existing_table,
+                Block(
+                    {
+                        "block_id": "old-cell",
+                        "parent_id": "old-table",
+                        "block_type": 32,
+                        "children": ["old-cell-text"],
+                        "table_cell": {},
+                    }
+                ),
+                _text_block("old-cell-text", "old-cell", "已有表格内容"),
+            ],
+            False,
+            None,
+        )
+    ]
+    service = FeishuDocumentService(client, document_url_base="https://feishu.cn/docx")  # type: ignore[arg-type]
+    content = "追加正文\n| 新列 |\n| --- |\n| 新值 |"
+
+    result = asyncio.run(service.append_document("doc1", content))
+
+    assert result.appended is True
+    assert result.block_count == 2
+    assert not any(call[0] == "delete_children" for call in client.calls)
+    create_calls = [call for call in client.calls if call[0] == "create_children"]
+    assert create_calls[0][1][1] == "doc1"
+    assert create_calls[0][2]["index"] == 2
+    assert create_calls[0][1][2][0].text.elements[0].text_run.content == "追加正文"
+    assert create_calls[1][2]["index"] == 3
+    assert create_calls[1][1][2][0].block_type == TABLE_BLOCK_TYPE
+    assert [call[1][1] for call in create_calls[2:]] == ["cell-0", "cell-1"]
+
+
+def test_append_empty_content_does_not_modify_document() -> None:
+    client = FakeFeishuClient()
+    client.block_pages = [([], False, None)]
+    service = FeishuDocumentService(client, document_url_base="https://feishu.cn/docx")  # type: ignore[arg-type]
+
+    result = asyncio.run(service.append_document("doc1", ""))
+
+    assert result.appended is False
+    assert result.block_count == 0
+    assert not any(call[0] in {"create_children", "delete_children"} for call in client.calls)
+
+
 def test_markdown_round_trip_for_common_blocks() -> None:
     markdown = "# 标题\n普通 **粗体** 和 `代码`\n- [x] 完成\n> 引用\n---"
     parsed = markdown_to_blocks(markdown)

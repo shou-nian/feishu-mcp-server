@@ -29,6 +29,14 @@ MarkdownContent = Annotated[
     str,
     Field(max_length=1_000_000, description="Markdown 格式的文档正文"),
 ]
+AppendContent = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=1_000_000,
+        description="需要追加的 Markdown 或普通文本正文",
+    ),
+]
 
 
 @dataclass(slots=True)
@@ -70,7 +78,7 @@ def create_mcp_server(
 
     server = FastMCP(
         name="feishu-document",
-        instructions="读取、创建和全量更新飞书 Docx 文档。正文使用 Markdown。",
+        instructions="读取、创建、全量更新和追加飞书 Docx 文档。正文使用 Markdown。",
         lifespan=lifespan,
         log_level="WARNING",
     )
@@ -128,6 +136,27 @@ def create_mcp_server(
         except Exception:
             LOGGER.exception("更新飞书文档时发生内部错误")
             raise ToolError("更新飞书文档失败，服务内部发生错误") from None
+
+    @server.tool(
+        name="append_feishu_document",
+        description=(
+            "在飞书文档末尾追加 Markdown、普通文本或表格；不会删除、覆盖或清空已有内容。"
+        ),
+    )
+    async def append_feishu_document(
+        document_id: DocumentId,
+        content: AppendContent,
+    ) -> dict[str, Any]:
+        try:
+            result = await runtime.require_service().append_document(document_id, content)
+            return result.model_dump()
+        except FeishuError as exc:
+            raise ToolError(str(exc)) from None
+        except ToolError:
+            raise
+        except Exception:
+            LOGGER.exception("追加飞书文档时发生内部错误")
+            raise ToolError("追加飞书文档失败，服务内部发生错误") from None
 
     return server
 

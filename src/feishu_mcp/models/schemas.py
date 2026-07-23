@@ -27,3 +27,11 @@ class UpdateDocumentResult(BaseModel):
     document_id: str
     updated: bool = True
     block_count: int = Field(ge=0)
+
+
+class AppendDocumentResult(BaseModel):
+    """追加飞书文档正文的结果。"""
+
+    document_id: str
+    appended: bool
+    block_count: int = Field(ge=0)

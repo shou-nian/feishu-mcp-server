@@ -4,11 +4,23 @@
 
 ## 功能与设计
 
-Server 暴露三个 Tool：
+Server 暴露四个 Tool：
 
 - `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
 - `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
 - `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown（含表格）全量替换。
+- `append_feishu_document(document_id, content)`：在已有文档末尾追加普通文本、Markdown 或表格，不删除或改写现有内容。
+
+追加 Tool 的输入示例：
+
+```json
+{
+  "document_id": "doxcnxxxxxxxxxxxx",
+  "content": "## 新增章节\n\n追加正文\n\n| 项目 | 状态 |\n| --- | --- |\n| 文档 | 完成 |"
+}
+```
+
+追加操作只读取 block 列表来确定文档根节点的末尾位置，然后创建新 blocks；不会调用删除接口，也不会通过“读取后整体重写”的方式更新文档。已有的段落、表格、图片以及当前未支持转换的其他根级 blocks 都会保留。普通文本本身是合法 Markdown，可直接作为 `content` 传入。
 
 对应的飞书 API：
 
@@ -133,7 +145,7 @@ uv run pytest
 uv run ruff check src tests
 ```
 
-测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/更新、分页、Markdown 与表格转换和表格单元格写入，以及 MCP Tool 注册、参数校验、错误转换和优雅退出。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 MCP Tool 注册、参数校验、错误转换和优雅退出。追加测试还会确认没有删除调用，且已有表格的嵌套 blocks 不会影响根节点末尾索引。
 
 ## 项目结构
 

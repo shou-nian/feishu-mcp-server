@@ -21,7 +21,12 @@ from lark_oapi.api.docx.v1 import (
 
 from feishu_mcp.feishu.client import FeishuClient
 from feishu_mcp.feishu.errors import FeishuAPIError
-from feishu_mcp.models.schemas import CreateDocumentResult, DocumentResult, UpdateDocumentResult
+from feishu_mcp.models.schemas import (
+    AppendDocumentResult,
+    CreateDocumentResult,
+    DocumentResult,
+    UpdateDocumentResult,
+)
 
 BLOCK_PAGE_SIZE = 500
 INSERT_BATCH_SIZE = 50
@@ -114,6 +119,27 @@ class FeishuDocumentService:
         await self._insert_blocks(document_id, blocks)
         return UpdateDocumentResult(document_id=document_id, block_count=len(blocks))
 
+    async def append_document(self, document_id: str, content: str) -> AppendDocumentResult:
+        """在根节点末尾追加 Markdown blocks，不删除或改写任何已有内容。"""
+
+        blocks = markdown_to_blocks(content)
+        existing_blocks = await self._list_blocks(document_id)
+        root_block_count = sum(
+            block.block_id != document_id and block.parent_id == document_id
+            for block in existing_blocks
+        )
+        if blocks:
+            await self._insert_blocks(
+                document_id,
+                blocks,
+                start_index=root_block_count,
+            )
+        return AppendDocumentResult(
+            document_id=document_id,
+            appended=bool(blocks),
+            block_count=len(blocks),
+        )
+
     async def _list_blocks(self, document_id: str) -> list[Block]:
         blocks: list[Block] = []
         page_token: str | None = None
@@ -137,8 +163,10 @@ class FeishuDocumentService:
         self,
         document_id: str,
         blocks: list[MarkdownBlock],
+        *,
+        start_index: int = 0,
     ) -> None:
-        root_index = 0
+        root_index = start_index
         position = 0
         while position < len(blocks):
             current = blocks[position]
