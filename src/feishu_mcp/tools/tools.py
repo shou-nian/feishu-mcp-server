@@ -54,8 +54,8 @@ def create_mcp_server(
 
     @asynccontextmanager
     async def lifespan(_: FastMCP[Any]):
-        client: FeishuClient | None = None
-        if runtime.service is None:
+        owns_service = runtime.service is None
+        if owns_service:
             settings = settings_factory()
             client = FeishuClient.from_settings(settings)
             runtime.service = FeishuDocumentService(
@@ -65,8 +65,7 @@ def create_mcp_server(
         try:
             yield {}
         finally:
-            if client is not None:
-                await client.aclose()
+            if owns_service:
                 runtime.service = None
 
     server = FastMCP(
@@ -78,7 +77,7 @@ def create_mcp_server(
 
     @server.tool(
         name="read_feishu_document",
-        description="读取飞书文档标题、Markdown 正文和原始 block 结构。",
+        description="读取飞书文档标题、Markdown 正文（含表格）和原始 block 结构。",
     )
     async def read_feishu_document(document_id: DocumentId) -> dict[str, Any]:
         try:
@@ -94,7 +93,7 @@ def create_mcp_server(
 
     @server.tool(
         name="create_feishu_document",
-        description="创建飞书文档，并把 Markdown 正文转换为飞书 blocks。",
+        description="创建飞书文档，并把 Markdown 正文（含表格）转换为飞书 blocks。",
     )
     async def create_feishu_document(
         title: DocumentTitle,
@@ -113,7 +112,7 @@ def create_mcp_server(
 
     @server.tool(
         name="update_feishu_document",
-        description="用 Markdown 全量替换指定飞书文档的正文。",
+        description="用 Markdown（含表格）全量替换指定飞书文档的正文。",
     )
     async def update_feishu_document(
         document_id: DocumentId,

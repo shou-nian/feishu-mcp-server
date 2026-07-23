@@ -5,7 +5,7 @@ description = "基于 MCP 协议的异步飞书文档服务"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "httpx>=0.28.1",
+    "lark-oapi>=1.7.1",
     "mcp>=1.28.1",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.14.2",

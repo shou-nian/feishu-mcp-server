@@ -1,14 +1,14 @@
 # 飞书 MCP Server
 
-一个使用 Python、官方 MCP SDK、`asyncio` 和 `httpx` 实现的飞书文档 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，通过飞书开放平台 Docx API 读取、创建和更新文档。
+一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书文档 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，通过飞书开放平台 Docx API 读取、创建和更新文档。
 
 ## 功能与设计
 
 Server 暴露三个 Tool：
 
-- `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回转换后的 Markdown。
-- `create_feishu_document(title, content)`：创建文档，将 Markdown 转为飞书 blocks 后写入。
-- `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown 全量替换。
+- `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
+- `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
+- `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown（含表格）全量替换。
 
 对应的飞书 API：
 
@@ -19,9 +19,19 @@ Server 暴露三个 Tool：
 - `POST /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children`：写入 blocks。
 - `DELETE /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children/batch_delete`：删除旧正文。
 
-鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。Token 在内存中缓存并提前刷新；API 返回 token 失效错误时会强制刷新并重试一次。所有 HTTP 请求均为异步请求。
+鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。应用凭证、Token 获取与缓存、API 请求序列化均由飞书官方 `lark-oapi` SDK 管理；业务代码调用 SDK 提供的 `aget`、`alist`、`acreate`、`abatch_delete` 等原生异步接口，不再自行发送 HTTP 请求。
 
-当前 Markdown 转换支持普通段落、1—9 级标题、无序/有序列表、任务列表、引用、分隔线、代码块，以及粗体、删除线、行内代码和链接。未支持的复杂飞书 block 仍会保留在 `blocks` 原始响应中，但不会凭空转换成 Markdown。
+当前 Markdown 转换支持普通段落、1—9 级标题、无序/有序列表、任务列表、引用、分隔线、代码块、标准管道表格，以及粗体、删除线、行内代码和链接。未支持的复杂飞书 block 仍会保留在 `blocks` 原始响应中，但不会凭空转换成 Markdown。
+
+表格示例：
+
+```markdown
+| 姓名 | 年龄 |
+| --- | --- |
+| 小明 | 18 |
+```
+
+写入时第一行会作为飞书表格表头；`<br>` 会在单元格内转换为换行。读取飞书表格时会根据 table block 的行列属性、cell IDs 和单元格子 blocks 重建 Markdown。Markdown 本身不能完整表达合并单元格、精确列宽或复杂嵌套 block，这些信息仍保留在 Tool 返回的原始 `blocks` 字段中。
 
 ## 环境准备
 
@@ -46,8 +56,9 @@ uv sync
 ```dotenv
 FEISHU_APP_ID=cli_xxxxx
 FEISHU_APP_SECRET=xxxxx
-FEISHU_BASE_URL=https://open.feishu.cn
 ```
+
+飞书开放平台地址固定为官方 `https://open.feishu.cn`，由代码配置，不需要环境变量。
 
 可选变量：
 
@@ -67,7 +78,7 @@ uv run feishu-mcp
 
 `feishu-mcp` 是通过 `project.scripts` 安装的推荐入口。根目录入口 `uv run python main.py` 仍可兼容使用。
 
-Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的 stdout。stdin 正常关闭、任务取消，或进程收到 `SIGINT`/`SIGTERM` 时，Server 会取消服务任务、退出 MCP 生命周期并关闭 HTTP 连接池。
+Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的 stdout。stdin 正常关闭、任务取消，或进程收到 `SIGINT`/`SIGTERM` 时，Server 会取消服务任务并退出 MCP 生命周期。
 
 缺少配置时进程会输出简明错误并以状态码 `2` 退出，不会把 Python traceback 返回给 MCP Client。
 
@@ -88,8 +99,7 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx",
-        "FEISHU_BASE_URL": "https://open.feishu.cn"
+        "FEISHU_APP_SECRET": "xxxxx"
       }
     }
   }
@@ -109,8 +119,7 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx",
-        "FEISHU_BASE_URL": "https://open.feishu.cn"
+        "FEISHU_APP_SECRET": "xxxxx"
       }
     }
   }
@@ -124,7 +133,7 @@ uv run pytest
 uv run ruff check src tests
 ```
 
-测试中的所有飞书 HTTP 行为都使用 `httpx.MockTransport` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 token 获取、缓存、过期刷新、鉴权失败、API token 重试，文档创建/读取/更新、分页和 Markdown 转换，以及 MCP Tool 注册、参数校验、错误转换和优雅退出。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/更新、分页、Markdown 与表格转换和表格单元格写入，以及 MCP Tool 注册、参数校验、错误转换和优雅退出。
 
 ## 项目结构
 
@@ -136,9 +145,9 @@ src/
     ├── main.py                  # stdio 生命周期和优雅退出
     ├── config/settings.py       # 环境变量配置
     ├── feishu/
-    │   ├── auth.py              # tenant_access_token 缓存与刷新
-    │   ├── client.py            # 统一异步 HTTP Client
-    │   ├── document.py          # Docx 业务与 Markdown 转换
+    │   ├── auth.py              # lark-oapi Client 与应用鉴权配置
+    │   ├── client.py            # 官方 SDK Docx 异步接口封装
+    │   ├── document.py          # Docx 业务、Markdown 与表格转换
     │   └── errors.py            # 用户友好的异常
     ├── tools/tools.py           # MCP Tools 注册（避免与官方 mcp 包冲突）
     ├── models/schemas.py        # 结构化响应模型

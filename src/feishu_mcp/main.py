@@ -85,9 +85,7 @@ def main() -> None:
         LOGGER.info("飞书 MCP Server 已停止")
     except ValidationError:
         configure_logging()
-        LOGGER.error(
-            "配置错误：请设置有效的 FEISHU_APP_ID、FEISHU_APP_SECRET 和 FEISHU_BASE_URL"
-        )
+        LOGGER.error("配置错误：请设置有效的 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
         raise SystemExit(2) from None
     except Exception as exc:
         LOGGER.error("飞书 MCP Server 启动或运行失败：%s", exc)

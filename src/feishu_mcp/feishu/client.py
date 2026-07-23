@@ -1,14 +1,32 @@
-"""统一的飞书开放平台异步 HTTP Client。"""
+"""基于飞书官方 lark-oapi SDK 的异步 Docx Client。"""
 
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
-import httpx
+import lark_oapi as lark
+from lark_oapi.api.docx.v1 import (
+    BatchDeleteDocumentBlockChildrenRequest,
+    BatchDeleteDocumentBlockChildrenRequestBody,
+    Block,
+    CreateDocumentBlockChildrenRequest,
+    CreateDocumentBlockChildrenRequestBody,
+    CreateDocumentRequest,
+    CreateDocumentRequestBody,
+    Document,
+    GetDocumentRequest,
+    ListDocumentBlockRequest,
+)
+from lark_oapi.core.exception import (
+    AccessTokenException,
+    ClientAssertionException,
+    NoAuthorizationException,
+    ObtainAccessTokenException,
+)
 
 from feishu_mcp.config.settings import Settings
-from feishu_mcp.feishu.auth import FeishuAuth
-from feishu_mcp.feishu.errors import FeishuAPIError
+from feishu_mcp.feishu.auth import build_lark_client
+from feishu_mcp.feishu.errors import FeishuAPIError, FeishuAuthError
 
-AUTH_ERROR_CODES = {99991661, 99991663, 99991664, 99991668}
 ERROR_MESSAGES = {
     99991663: "飞书鉴权失败，请检查 FEISHU_APP_ID 和 FEISHU_APP_SECRET",
     99991664: "飞书应用已停用，请检查应用状态",
@@ -16,91 +34,138 @@ ERROR_MESSAGES = {
     91403: "飞书应用缺少文档权限，请在开放平台配置所需权限",
     1770032: "飞书文档不存在，或当前应用无权访问",
 }
+AUTH_EXCEPTIONS = (
+    AccessTokenException,
+    ClientAssertionException,
+    NoAuthorizationException,
+    ObtainAccessTokenException,
+)
+ResponseT = TypeVar("ResponseT")
 
 
 class FeishuClient:
-    """自动添加鉴权、刷新 token 并校验业务错误码的客户端。"""
+    """对官方 SDK Docx v1 异步接口的业务友好封装。"""
 
-    def __init__(
-        self,
-        app_id: str,
-        app_secret: str,
-        *,
-        base_url: str = "https://open.feishu.cn",
-        timeout: float = 15.0,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self._owns_http_client = http_client is None
-        self._http_client = http_client or httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
-            timeout=timeout,
-        )
-        self.auth = FeishuAuth(self._http_client, app_id, app_secret)
+    def __init__(self, sdk_client: lark.Client) -> None:
+        self._sdk_client = sdk_client
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "FeishuClient":
-        """从应用配置创建客户端。"""
+        """从应用配置创建官方 SDK 客户端。"""
 
-        return cls(
-            app_id=settings.feishu_app_id,
-            app_secret=settings.feishu_app_secret.get_secret_value(),
-            base_url=settings.feishu_base_url,
-            timeout=settings.feishu_request_timeout,
+        return cls(build_lark_client(settings))
+
+    async def get_document(self, document_id: str) -> Document:
+        request = GetDocumentRequest.builder().document_id(document_id).build()
+        data = await self._call(lambda: self._sdk_client.docx.v1.document.aget(request))
+        document = getattr(data, "document", None)
+        if not isinstance(document, Document):
+            raise FeishuAPIError("飞书读取文档成功，但响应中缺少 document")
+        return document
+
+    async def list_document_blocks(
+        self,
+        document_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> tuple[list[Block], bool, str | None]:
+        builder = (
+            ListDocumentBlockRequest.builder()
+            .document_id(document_id)
+            .page_size(page_size)
+        )
+        if page_token:
+            builder.page_token(page_token)
+        request = builder.build()
+        data = await self._call(lambda: self._sdk_client.docx.v1.document_block.alist(request))
+        items = getattr(data, "items", None) or []
+        if not isinstance(items, list) or any(not isinstance(item, Block) for item in items):
+            raise FeishuAPIError("飞书文档 blocks 响应格式不正确")
+        return items, bool(getattr(data, "has_more", False)), getattr(data, "page_token", None)
+
+    async def create_document(self, title: str) -> Document:
+        body = CreateDocumentRequestBody.builder().title(title).build()
+        request = CreateDocumentRequest.builder().request_body(body).build()
+        data = await self._call(lambda: self._sdk_client.docx.v1.document.acreate(request))
+        document = getattr(data, "document", None)
+        if not isinstance(document, Document):
+            raise FeishuAPIError("飞书创建文档成功，但响应中缺少 document")
+        return document
+
+    async def create_block_children(
+        self,
+        document_id: str,
+        block_id: str,
+        children: list[Block],
+        *,
+        index: int,
+    ) -> list[Block]:
+        body = (
+            CreateDocumentBlockChildrenRequestBody.builder()
+            .children(children)
+            .index(index)
+            .build()
+        )
+        request = (
+            CreateDocumentBlockChildrenRequest.builder()
+            .document_id(document_id)
+            .block_id(block_id)
+            .request_body(body)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.docx.v1.document_block_children.acreate(request)
+        )
+        created = getattr(data, "children", None) or []
+        if not isinstance(created, list) or any(not isinstance(item, Block) for item in created):
+            raise FeishuAPIError("飞书创建 blocks 响应格式不正确")
+        return created
+
+    async def delete_block_children(
+        self,
+        document_id: str,
+        block_id: str,
+        *,
+        start_index: int,
+        end_index: int,
+    ) -> None:
+        body = (
+            BatchDeleteDocumentBlockChildrenRequestBody.builder()
+            .start_index(start_index)
+            .end_index(end_index)
+            .build()
+        )
+        request = (
+            BatchDeleteDocumentBlockChildrenRequest.builder()
+            .document_id(document_id)
+            .block_id(block_id)
+            .request_body(body)
+            .build()
+        )
+        await self._call(
+            lambda: self._sdk_client.docx.v1.document_block_children.abatch_delete(request)
         )
 
-    async def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-        """调用飞书 API，成功时返回响应中的 data 对象。"""
-
-        request_headers = dict(kwargs.pop("headers", {}))
-        for attempt in range(2):
-            token = await self.auth.get_token(force_refresh=attempt > 0)
-            headers = dict(request_headers)
-            headers["Authorization"] = f"Bearer {token}"
-
-            try:
-                response = await self._http_client.request(method, url, headers=headers, **kwargs)
-            except httpx.HTTPError as exc:
-                raise FeishuAPIError("无法连接飞书开放平台，请稍后重试") from exc
-
-            payload = self._parse_response(response)
-            code = payload.get("code", 0)
-            if attempt == 0 and (response.status_code == 401 or code in AUTH_ERROR_CODES):
-                self.auth.invalidate()
-                continue
-
-            if response.is_error or code != 0:
-                raise self._to_api_error(response.status_code, code, payload.get("msg"))
-
-            data = payload.get("data", {})
-            return data if isinstance(data, dict) else {"value": data}
-
-        raise FeishuAPIError("飞书访问凭证刷新后仍不可用，请检查应用配置")
-
-    async def aclose(self) -> None:
-        """关闭由当前实例创建的连接池。"""
-
-        if self._owns_http_client:
-            await self._http_client.aclose()
-
-    @staticmethod
-    def _parse_response(response: httpx.Response) -> dict[str, Any]:
-        if not response.content:
-            return {"code": 0, "data": {}}
+    async def _call(self, operation: Callable[[], Awaitable[ResponseT]]) -> Any:
         try:
-            payload = response.json()
-        except ValueError as exc:
-            raise FeishuAPIError(
-                f"飞书开放平台返回了无法解析的响应（HTTP {response.status_code}）"
+            response = await operation()
+        except AUTH_EXCEPTIONS as exc:
+            raise FeishuAuthError(
+                "飞书鉴权失败，请检查 FEISHU_APP_ID 和 FEISHU_APP_SECRET"
             ) from exc
-        if not isinstance(payload, dict):
-            raise FeishuAPIError("飞书开放平台返回了非对象响应")
-        return payload
+        except Exception as exc:
+            raise FeishuAPIError("飞书官方 SDK 请求失败，请检查网络后重试") from exc
 
-    @staticmethod
-    def _to_api_error(status_code: int, code: Any, message: Any) -> FeishuAPIError:
-        numeric_code = code if isinstance(code, int) else None
-        friendly = ERROR_MESSAGES.get(numeric_code)
-        if friendly is None:
-            details = str(message) if message else "未知错误"
-            friendly = f"飞书 API 调用失败（code={code}, HTTP {status_code}）：{details}"
-        return FeishuAPIError(friendly, code=numeric_code)
+        if not response.success():  # type: ignore[attr-defined]
+            code = getattr(response, "code", None)
+            message = ERROR_MESSAGES.get(code)
+            if message is None:
+                detail = getattr(response, "msg", None) or "未知错误"
+                message = f"飞书 API 调用失败（code={code}）：{detail}"
+            raise FeishuAPIError(message, code=code if isinstance(code, int) else None)
+
+        data = getattr(response, "data", None)
+        if data is None:
+            raise FeishuAPIError("飞书 API 响应缺少 data")
+        return data
