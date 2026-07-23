@@ -9,6 +9,8 @@ from lark_oapi.api.bitable.v1 import (
     AppTableRecord,
     CreateAppTableRecordRequest,
     ListAppTableFieldRequest,
+    ListAppTableRecordRequest,
+    UpdateAppTableRecordRequest,
 )
 from lark_oapi.api.docx.v1 import (
     BatchDeleteDocumentBlockChildrenRequest,
@@ -201,6 +203,66 @@ class FeishuClient:
         if not isinstance(created, AppTableRecord):
             raise FeishuAPIError("飞书新增 Bitable 记录成功，但响应中缺少 record")
         return created
+
+    async def list_bitable_records(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+        filter_expression: str | None = None,
+    ) -> tuple[list[AppTableRecord], bool, str | None, int | None]:
+        builder = (
+            ListAppTableRecordRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .page_size(page_size)
+        )
+        if page_token:
+            builder.page_token(page_token)
+        if filter_expression:
+            builder.filter(filter_expression)
+        request = builder.build()
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_record.alist(request)
+        )
+        items = getattr(data, "items", None) or []
+        if not isinstance(items, list) or any(
+            not isinstance(item, AppTableRecord) for item in items
+        ):
+            raise FeishuAPIError("飞书 Bitable 记录响应格式不正确")
+        total = getattr(data, "total", None)
+        return (
+            items,
+            bool(getattr(data, "has_more", False)),
+            getattr(data, "page_token", None),
+            total if isinstance(total, int) else None,
+        )
+
+    async def update_bitable_record(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        fields: dict[str, Any],
+    ) -> AppTableRecord:
+        record = AppTableRecord.builder().fields(fields).build()
+        request = (
+            UpdateAppTableRecordRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .record_id(record_id)
+            .request_body(record)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_record.aupdate(request)
+        )
+        updated = getattr(data, "record", None)
+        if not isinstance(updated, AppTableRecord):
+            raise FeishuAPIError("飞书更新 Bitable 记录成功，但响应中缺少 record")
+        return updated
 
     async def _call(self, operation: Callable[[], Awaitable[ResponseT]]) -> Any:
         try:

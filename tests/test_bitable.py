@@ -1,4 +1,4 @@
-"""Bitable 字段查询、类型校验和记录新增测试。"""
+"""Bitable 字段/记录查询、类型校验和记录写入测试。"""
 
 import asyncio
 from typing import Any
@@ -41,10 +41,18 @@ def _field(
 
 
 class FakeBitableClient:
-    def __init__(self, pages: list[tuple[list[AppTableFieldForList], bool, str | None]]) -> None:
+    def __init__(
+        self,
+        pages: list[tuple[list[AppTableFieldForList], bool, str | None]],
+        *,
+        record_page: tuple[list[AppTableRecord], bool, str | None, int | None] | None = None,
+    ) -> None:
         self.pages = pages
+        self.record_page = record_page
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.created_fields: dict[str, Any] | None = None
+        self.updated_fields: dict[str, Any] | None = None
+        self.updated_record_id: str | None = None
 
     async def list_bitable_fields(
         self,
@@ -72,6 +80,47 @@ class FakeBitableClient:
         self.calls.append(("create_record", (app_token, table_id), {"fields": fields}))
         self.created_fields = fields
         return AppTableRecord.builder().record_id("rec_new").fields(fields).build()
+
+    async def list_bitable_records(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+        filter_expression: str | None = None,
+    ) -> tuple[list[AppTableRecord], bool, str | None, int | None]:
+        self.calls.append(
+            (
+                "list_records",
+                (app_token, table_id),
+                {
+                    "page_size": page_size,
+                    "page_token": page_token,
+                    "filter_expression": filter_expression,
+                },
+            )
+        )
+        assert self.record_page is not None
+        return self.record_page
+
+    async def update_bitable_record(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        fields: dict[str, Any],
+    ) -> AppTableRecord:
+        self.calls.append(
+            (
+                "update_record",
+                (app_token, table_id, record_id),
+                {"fields": fields},
+            )
+        )
+        self.updated_record_id = record_id
+        self.updated_fields = fields
+        return AppTableRecord.builder().record_id(record_id).fields(fields).build()
 
 
 def test_list_fields_paginates_and_returns_schema() -> None:
@@ -134,6 +183,95 @@ def test_create_record_normalizes_values_using_live_schema() -> None:
         "负责人": [{"id": "ou_owner"}],
         "链接": {"link": "https://example.com", "text": "https://example.com"},
     }
+
+
+def test_list_records_returns_record_ids_and_pagination() -> None:
+    record = (
+        AppTableRecord.builder()
+        .record_id("rec_target")
+        .fields({"标题": "目标行", "状态": "是"})
+        .created_time(1000)
+        .last_modified_time(2000)
+        .record_url("https://example.feishu.cn/base/record")
+        .build()
+    )
+    client = FakeBitableClient(
+        [],
+        record_page=([record], True, "next-record-page", 2),
+    )
+    service = FeishuBitableService(client)  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        service.list_records(
+            "app1",
+            "tbl1",
+            page_size=50,
+            page_token="current-page",
+            filter_expression='CurrentValue.[标题]="目标行"',
+        )
+    )
+
+    assert result.records[0].record_id == "rec_target"
+    assert result.records[0].fields == {"标题": "目标行", "状态": "是"}
+    assert result.records[0].last_modified_time == 2000
+    assert result.has_more is True
+    assert result.page_token == "next-record-page"
+    assert result.total == 2
+    assert client.calls == [
+        (
+            "list_records",
+            ("app1", "tbl1"),
+            {
+                "page_size": 50,
+                "page_token": "current-page",
+                "filter_expression": 'CurrentValue.[标题]="目标行"',
+            },
+        )
+    ]
+
+
+def test_update_record_selects_single_and_multi_options_by_name() -> None:
+    fields = [
+        _field("是否启用", 3, options=["是", "否"]),
+        _field("适用范围", 4, options=["内部", "外部", "测试"]),
+    ]
+    client = FakeBitableClient([(fields, False, None)])
+    service = FeishuBitableService(client)  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        service.update_record(
+            "app1",
+            "tbl1",
+            "rec_target",
+            {"是否启用": "是", "适用范围": ["内部", "测试"]},
+        )
+    )
+
+    assert result.record_id == "rec_target"
+    assert client.updated_record_id == "rec_target"
+    assert client.updated_fields == {
+        "是否启用": "是",
+        "适用范围": ["内部", "测试"],
+    }
+
+
+def test_update_record_rejects_unknown_select_option_before_api_call() -> None:
+    client = FakeBitableClient(
+        [([_field("是否启用", 3, options=["是", "否"])], False, None)]
+    )
+    service = FeishuBitableService(client)  # type: ignore[arg-type]
+
+    with pytest.raises(BitableValidationError, match="不存在的选项"):
+        asyncio.run(
+            service.update_record(
+                "app1",
+                "tbl1",
+                "rec_target",
+                {"是否启用": "未知"},
+            )
+        )
+
+    assert client.updated_fields is None
 
 
 @pytest.mark.parametrize(

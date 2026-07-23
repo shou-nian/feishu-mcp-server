@@ -1,11 +1,11 @@
-"""飞书 Bitable 字段结构查询、值校验与记录新增。"""
+"""飞书 Bitable 字段、记录查询和值校验写入。"""
 
 import json
 from datetime import datetime, timezone
 from typing import Any
 
 import lark_oapi as lark
-from lark_oapi.api.bitable.v1 import AppTableFieldForList
+from lark_oapi.api.bitable.v1 import AppTableFieldForList, AppTableRecord
 
 from feishu_mcp.feishu.client import FeishuClient
 from feishu_mcp.feishu.errors import BitableValidationError, FeishuAPIError
@@ -13,6 +13,8 @@ from feishu_mcp.models.schemas import (
     BitableFieldSchema,
     BitableFieldsResult,
     BitableRecordResult,
+    BitableRecordSchema,
+    BitableRecordsResult,
 )
 
 FIELD_PAGE_SIZE = 100
@@ -43,7 +45,7 @@ READ_ONLY_FIELD_TYPES = {19, 20, 1001, 1002, 1003, 1004, 1005}
 
 
 class FeishuBitableService:
-    """根据实时字段 schema 安全写入 Bitable 记录。"""
+    """查询 Bitable 字段与记录，并根据实时 schema 安全写入。"""
 
     def __init__(self, client: FeishuClient) -> None:
         self._client = client
@@ -63,37 +65,52 @@ class FeishuBitableService:
         values: dict[str, Any],
     ) -> BitableRecordResult:
         fields = await self._list_all_fields(app_token, table_id)
-        by_name = {field.field_name: field for field in fields if field.field_name}
-        by_id = {field.field_id: field for field in fields if field.field_id}
-        normalized: dict[str, Any] = {}
-
-        for supplied_name, value in values.items():
-            field = by_name.get(supplied_name) or by_id.get(supplied_name)
-            if field is None:
-                available = "、".join(sorted(by_name))
-                raise BitableValidationError(
-                    f"Bitable 字段不存在：{supplied_name}。可用字段：{available}"
-                )
-            if not field.field_name:
-                raise BitableValidationError(f"Bitable 字段缺少名称：{supplied_name}")
-            if not _is_writable(field):
-                raise BitableValidationError(
-                    f"Bitable 字段“{field.field_name}”是只读字段，不能在新增记录时写入"
-                )
-            normalized[field.field_name] = _normalize_field_value(field, value)
-
-        if not normalized:
-            raise BitableValidationError("新增 Bitable 记录至少需要提供一个字段值")
+        normalized = _normalize_record_values(fields, values)
 
         record = await self._client.create_bitable_record(app_token, table_id, normalized)
-        if not record.record_id:
-            raise FeishuAPIError("飞书新增 Bitable 记录成功，但响应中缺少 record_id")
-        return BitableRecordResult(
+        return _record_result(app_token, table_id, record, normalized, "新增")
+
+    async def list_records(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+        filter_expression: str | None = None,
+    ) -> BitableRecordsResult:
+        records, has_more, next_token, total = await self._client.list_bitable_records(
+            app_token,
+            table_id,
+            page_size=page_size,
+            page_token=page_token,
+            filter_expression=filter_expression,
+        )
+        return BitableRecordsResult(
             app_token=app_token,
             table_id=table_id,
-            record_id=record.record_id,
-            fields=record.fields or normalized,
+            records=[_record_schema(record) for record in records],
+            has_more=has_more,
+            page_token=next_token,
+            total=total,
         )
+
+    async def update_record(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        values: dict[str, Any],
+    ) -> BitableRecordResult:
+        fields = await self._list_all_fields(app_token, table_id)
+        normalized = _normalize_record_values(fields, values)
+        record = await self._client.update_bitable_record(
+            app_token,
+            table_id,
+            record_id,
+            normalized,
+        )
+        return _record_result(app_token, table_id, record, normalized, "更新")
 
     async def _list_all_fields(
         self,
@@ -115,6 +132,69 @@ class FeishuBitableService:
             if not next_token:
                 raise FeishuAPIError("飞书 Bitable 字段分页响应缺少 page_token")
             page_token = next_token
+
+
+def _normalize_record_values(
+    fields: list[AppTableFieldForList],
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    by_name = {field.field_name: field for field in fields if field.field_name}
+    by_id = {field.field_id: field for field in fields if field.field_id}
+    normalized: dict[str, Any] = {}
+
+    for supplied_name, value in values.items():
+        field = by_name.get(supplied_name) or by_id.get(supplied_name)
+        if field is None:
+            available = "、".join(sorted(by_name))
+            raise BitableValidationError(
+                f"Bitable 字段不存在：{supplied_name}。可用字段：{available}"
+            )
+        if not field.field_name:
+            raise BitableValidationError(f"Bitable 字段缺少名称：{supplied_name}")
+        if not _is_writable(field):
+            raise BitableValidationError(
+                f"Bitable 字段“{field.field_name}”是只读字段，不能写入"
+            )
+        normalized[field.field_name] = _normalize_field_value(field, value)
+
+    if not normalized:
+        raise BitableValidationError("写入 Bitable 记录至少需要提供一个字段值")
+    return normalized
+
+
+def _record_schema(record: AppTableRecord) -> BitableRecordSchema:
+    if not record.record_id:
+        raise FeishuAPIError("飞书 Bitable 记录响应缺少 record_id")
+    fields = record.fields or {}
+    if not isinstance(fields, dict):
+        raise FeishuAPIError("飞书 Bitable 记录 fields 响应格式不正确")
+    return BitableRecordSchema(
+        record_id=record.record_id,
+        fields=fields,
+        created_time=record.created_time,
+        last_modified_time=record.last_modified_time,
+        record_url=record.record_url,
+    )
+
+
+def _record_result(
+    app_token: str,
+    table_id: str,
+    record: AppTableRecord,
+    fallback_fields: dict[str, Any],
+    operation: str,
+) -> BitableRecordResult:
+    if not record.record_id:
+        raise FeishuAPIError(f"飞书{operation} Bitable 记录成功，但响应中缺少 record_id")
+    fields = record.fields or fallback_fields
+    if not isinstance(fields, dict):
+        raise FeishuAPIError(f"飞书{operation} Bitable 记录成功，但 fields 响应格式不正确")
+    return BitableRecordResult(
+        app_token=app_token,
+        table_id=table_id,
+        record_id=record.record_id,
+        fields=fields,
+    )
 
 
 def _field_schema(field: AppTableFieldForList) -> BitableFieldSchema:

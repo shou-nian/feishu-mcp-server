@@ -13,6 +13,8 @@ from feishu_mcp.models.schemas import (
     BitableFieldSchema,
     BitableFieldsResult,
     BitableRecordResult,
+    BitableRecordSchema,
+    BitableRecordsResult,
     CreateDocumentResult,
     DocumentResult,
     UpdateDocumentResult,
@@ -89,8 +91,46 @@ class FakeBitableService:
             fields=values,
         )
 
+    async def list_records(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+        filter_expression: str | None = None,
+    ) -> BitableRecordsResult:
+        self.calls.append(
+            (
+                "list_records",
+                (app_token, table_id, page_size, page_token, filter_expression),
+            )
+        )
+        return BitableRecordsResult(
+            app_token=app_token,
+            table_id=table_id,
+            records=[BitableRecordSchema(record_id="rec1", fields={"状态": "是"})],
+            has_more=False,
+            total=1,
+        )
 
-def test_six_tools_are_registered() -> None:
+    async def update_record(
+        self,
+        app_token: str,
+        table_id: str,
+        record_id: str,
+        values: dict[str, Any],
+    ) -> BitableRecordResult:
+        self.calls.append(("update_record", (app_token, table_id, record_id, values)))
+        return BitableRecordResult(
+            app_token=app_token,
+            table_id=table_id,
+            record_id=record_id,
+            fields=values,
+        )
+
+
+def test_eight_tools_are_registered() -> None:
     server = create_mcp_server(document_service=FakeDocumentService())  # type: ignore[arg-type]
 
     tools = asyncio.run(server.list_tools())
@@ -102,6 +142,8 @@ def test_six_tools_are_registered() -> None:
         "append_feishu_document",
         "list_feishu_bitable_fields",
         "create_feishu_bitable_record",
+        "list_feishu_bitable_records",
+        "update_feishu_bitable_record",
     }
     read_tool = next(tool for tool in tools if tool.name == "read_feishu_document")
     assert read_tool.inputSchema["properties"]["document_id"]["minLength"] == 1
@@ -185,6 +227,28 @@ def test_bitable_tools_return_structured_results() -> None:
             },
         )
     )
+    _, records_result = asyncio.run(
+        server.call_tool(
+            "list_feishu_bitable_records",
+            {
+                "app_token": "app1",
+                "table_id": "tbl1",
+                "filter_expression": 'CurrentValue.[状态]="是"',
+                "page_size": 50,
+            },
+        )
+    )
+    _, update_result = asyncio.run(
+        server.call_tool(
+            "update_feishu_bitable_record",
+            {
+                "app_token": "app1",
+                "table_id": "tbl1",
+                "record_id": "rec1",
+                "fields": {"状态": "是", "标签": ["重要"]},
+            },
+        )
+    )
 
     assert fields_result["fields"][0]["field_name"] == "标题"  # type: ignore[index]
     assert record_result == {  # type: ignore[comparison-overlap]
@@ -193,10 +257,53 @@ def test_bitable_tools_return_structured_results() -> None:
         "record_id": "rec1",
         "fields": {"标题": "内容"},
     }
+    assert records_result["records"][0]["record_id"] == "rec1"  # type: ignore[index]
+    assert update_result == {  # type: ignore[comparison-overlap]
+        "app_token": "app1",
+        "table_id": "tbl1",
+        "record_id": "rec1",
+        "fields": {"状态": "是", "标签": ["重要"]},
+    }
     assert bitable_service.calls == [
         ("list_fields", ("app1", "tbl1")),
         ("create_record", ("app1", "tbl1", {"标题": "内容"})),
+        (
+            "list_records",
+            ("app1", "tbl1", 50, None, 'CurrentValue.[状态]="是"'),
+        ),
+        (
+            "update_record",
+            ("app1", "tbl1", "rec1", {"状态": "是", "标签": ["重要"]}),
+        ),
     ]
+
+
+def test_bitable_record_tool_argument_validation() -> None:
+    server = create_mcp_server(
+        document_service=FakeDocumentService(),  # type: ignore[arg-type]
+        bitable_service=FakeBitableService(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ToolError, match="validation error"):
+        asyncio.run(
+            server.call_tool(
+                "list_feishu_bitable_records",
+                {"app_token": "app1", "table_id": "tbl1", "page_size": 0},
+            )
+        )
+
+    with pytest.raises(ToolError, match="validation error"):
+        asyncio.run(
+            server.call_tool(
+                "update_feishu_bitable_record",
+                {
+                    "app_token": "app1",
+                    "table_id": "tbl1",
+                    "record_id": "",
+                    "fields": {"状态": "是"},
+                },
+            )
+        )
 
 
 def test_feishu_error_is_converted_to_tool_error() -> None:

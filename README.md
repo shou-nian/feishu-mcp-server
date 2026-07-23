@@ -1,17 +1,19 @@
 # 飞书 MCP Server
 
-一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写以及 Bitable（多维表格）字段查询和记录新增。
+一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写以及 Bitable（多维表格）字段、记录查询和记录新增、更新。
 
 ## 功能与设计
 
-Server 暴露六个 Tool：
+Server 暴露八个 Tool：
 
 - `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
 - `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
 - `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown（含表格）全量替换。
 - `append_feishu_document(document_id, content)`：在已有文档末尾追加普通文本、Markdown 或表格，不删除或改写现有内容。
 - `list_feishu_bitable_fields(app_token, table_id)`：分页查询多维表格字段、类型、选项和是否可写。
+- `list_feishu_bitable_records(app_token, table_id, filter_expression, page_size, page_token)`：分页查询记录，可使用 filter 表达式定位目标行并获取 `record_id`。
 - `create_feishu_bitable_record(app_token, table_id, fields)`：读取实时字段结构，校验并转换字段值后新增记录。
+- `update_feishu_bitable_record(app_token, table_id, record_id, fields)`：读取实时字段结构后，通过 `record_id` 更新指定行。
 
 追加 Tool 的输入示例：
 
@@ -33,7 +35,9 @@ Server 暴露六个 Tool：
 - `POST /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children`：写入 blocks。
 - `DELETE /open-apis/docx/v1/documents/{document_id}/blocks/{block_id}/children/batch_delete`：删除旧正文。
 - `GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields`：分页查询 Bitable 字段结构。
+- `GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records`：分页或按 filter 查询 Bitable 记录。
 - `POST /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records`：新增 Bitable 记录。
+- `PUT /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}`：更新指定 Bitable 记录。
 
 鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。应用凭证、Token 获取与缓存、API 请求序列化均由飞书官方 `lark-oapi` SDK 管理；业务代码调用 SDK 提供的 `aget`、`alist`、`acreate`、`abatch_delete` 等原生异步接口，不再自行发送 HTTP 请求。
 
@@ -51,7 +55,7 @@ Server 暴露六个 Tool：
 
 ## Bitable 字段与记录
 
-Docx 表格是文档内的排版 block，Bitable 是具有字段 schema 和记录的独立多维表格。`append_feishu_document` 只能追加前者；修改多维表格必须使用 Bitable Tools。
+Docx 表格是文档内的排版 block，Bitable 是具有字段 schema 和记录的独立多维表格。`append_feishu_document` 只能追加前者；查询或修改多维表格必须使用 Bitable Tools。
 
 Bitable 地址通常类似：
 
@@ -87,6 +91,37 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 }
 ```
 
+### 查询并更新指定行
+
+先通过 `list_feishu_bitable_records` 获取目标行的 `record_id`。不传 `filter_expression` 时按页返回记录；需要定位时可传飞书 Bitable filter 表达式：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx",
+  "filter_expression": "CurrentValue.[标题]=\"目标任务\"",
+  "page_size": 100
+}
+```
+
+响应中的每条记录包含 `record_id`、`fields`、创建/修改时间和记录 URL。若 `has_more` 为 `true`，将返回的 `page_token` 传入下一次调用继续查询。
+
+取得 `record_id` 后，只更新需要修改的字段：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx",
+  "record_id": "recxxxxxxxx",
+  "fields": {
+    "是否启用": "是",
+    "适用范围": ["内部", "测试"]
+  }
+}
+```
+
+`update_feishu_bitable_record` 不会在表尾新增记录，也不会替换整行；未传入的其他字段保持不变。更新前会重新读取实时字段 schema。单选字段直接传已存在的选项名称字符串，多选字段传选项名称数组，服务校验选项后由飞书 API 选择对应项；也可以传 `null` 清空单选，或传空数组清空多选。
+
 常用字段值格式：
 
 | 字段类型 | 输入格式 |
@@ -103,7 +138,7 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 | 单向/双向关联 | 关联记录 ID 数组 |
 | 地理位置 | 飞书 API 要求的地理位置对象 |
 
-公式、查找引用、创建/修改时间、创建/修改人和自动编号属于只读字段，新增记录时会被拒绝。单选和多选值必须已经存在于字段选项中；未知字段、错误类型和空字段对象都会在调用新增记录 API 前返回清晰错误。
+公式、查找引用、创建/修改时间、创建/修改人和自动编号属于只读字段，新增或更新记录时会被拒绝。单选和多选值必须已经存在于字段选项中；未知字段、错误类型和空字段对象都会在调用写入 API 前返回清晰错误。
 
 ## 环境准备
 
@@ -119,7 +154,7 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 uv sync
 ```
 
-飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取、记录新增相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
+飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取、记录读取、新增和更新相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
 
 ## 配置
 
@@ -205,7 +240,7 @@ uv run pytest
 uv run ruff check main.py src tests
 ```
 
-测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、字段类型规范化、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、记录查询、指定行更新、单双选规范化、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
 
 ## 项目结构
 
@@ -220,7 +255,7 @@ src/
     │   ├── auth.py              # lark-oapi Client 与应用鉴权配置
     │   ├── client.py            # 官方 SDK Docx/Bitable 异步接口封装
     │   ├── document.py          # Docx 业务、Markdown 与表格转换
-    │   ├── bitable.py           # Bitable schema、值校验与记录新增
+    │   ├── bitable.py           # Bitable schema、记录查询、值校验与记录写入
     │   └── errors.py            # 用户友好的异常
     ├── tools/tools.py           # MCP Tools 注册（避免与官方 mcp 包冲突）
     ├── models/schemas.py        # 结构化响应模型

@@ -46,6 +46,26 @@ BitableTableId = Annotated[
     str,
     Field(min_length=1, max_length=256, description="Bitable table_id（数据表 ID）"),
 ]
+BitableRecordId = Annotated[
+    str,
+    Field(min_length=1, max_length=256, description="需要更新的 Bitable record_id"),
+]
+BitableFilterExpression = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=2_000,
+        description="可选的飞书 Bitable filter 表达式，用于定位记录",
+    ),
+]
+BitablePageSize = Annotated[
+    int,
+    Field(ge=1, le=500, description="每页记录数，范围 1—500"),
+]
+BitablePageToken = Annotated[
+    str,
+    Field(min_length=1, max_length=1_000, description="上一页返回的分页 token"),
+]
 BitableRecordFields = Annotated[
     dict[str, Any],
     Field(min_length=1, description="以字段名称或 field_id 为 key 的记录字段值"),
@@ -105,7 +125,8 @@ def create_mcp_server(
     server = FastMCP(
         name="feishu-document",
         instructions=(
-            "读取、创建、全量更新和追加飞书 Docx 文档；查询 Bitable 字段并按结构新增记录。"
+            "读取、创建、全量更新和追加飞书 Docx 文档；"
+            "查询 Bitable 字段与记录，并按字段结构新增或更新指定记录。"
         ),
         lifespan=lifespan,
         log_level="WARNING",
@@ -206,6 +227,37 @@ def create_mcp_server(
             raise ToolError("查询 Bitable 字段失败，服务内部发生错误") from None
 
     @server.tool(
+        name="list_feishu_bitable_records",
+        description=(
+            "分页查询飞书多维表格记录，可传入 Bitable filter 表达式定位目标行；"
+            "返回用于精确更新的 record_id。"
+        ),
+    )
+    async def list_feishu_bitable_records(
+        app_token: BitableToken,
+        table_id: BitableTableId,
+        filter_expression: BitableFilterExpression | None = None,
+        page_size: BitablePageSize = 100,
+        page_token: BitablePageToken | None = None,
+    ) -> dict[str, Any]:
+        try:
+            result = await runtime.require_bitable_service().list_records(
+                app_token,
+                table_id,
+                page_size=page_size,
+                page_token=page_token,
+                filter_expression=filter_expression,
+            )
+            return result.model_dump()
+        except FeishuError as exc:
+            raise ToolError(str(exc)) from None
+        except ToolError:
+            raise
+        except Exception:
+            LOGGER.exception("查询 Bitable 记录时发生内部错误")
+            raise ToolError("查询 Bitable 记录失败，服务内部发生错误") from None
+
+    @server.tool(
         name="create_feishu_bitable_record",
         description=(
             "先查询 Bitable 字段结构并校验字段名称、类型、选项和只读属性，再新增一条记录。"
@@ -230,6 +282,35 @@ def create_mcp_server(
         except Exception:
             LOGGER.exception("新增 Bitable 记录时发生内部错误")
             raise ToolError("新增 Bitable 记录失败，服务内部发生错误") from None
+
+    @server.tool(
+        name="update_feishu_bitable_record",
+        description=(
+            "通过 record_id 更新指定 Bitable 行。更新前读取实时字段结构；"
+            "单选传选项名称字符串，多选传选项名称数组。"
+        ),
+    )
+    async def update_feishu_bitable_record(
+        app_token: BitableToken,
+        table_id: BitableTableId,
+        record_id: BitableRecordId,
+        fields: BitableRecordFields,
+    ) -> dict[str, Any]:
+        try:
+            result = await runtime.require_bitable_service().update_record(
+                app_token,
+                table_id,
+                record_id,
+                fields,
+            )
+            return result.model_dump()
+        except FeishuError as exc:
+            raise ToolError(str(exc)) from None
+        except ToolError:
+            raise
+        except Exception:
+            LOGGER.exception("更新 Bitable 记录时发生内部错误")
+            raise ToolError("更新 Bitable 记录失败，服务内部发生错误") from None
 
     return server
 

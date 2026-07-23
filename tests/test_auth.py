@@ -29,7 +29,11 @@ def _sdk_client(**methods: AsyncMock) -> SimpleNamespace:
         abatch_delete=methods.get("delete_children", AsyncMock()),
     )
     app_table_field = SimpleNamespace(alist=methods.get("list_bitable_fields", AsyncMock()))
-    app_table_record = SimpleNamespace(acreate=methods.get("create_bitable_record", AsyncMock()))
+    app_table_record = SimpleNamespace(
+        acreate=methods.get("create_bitable_record", AsyncMock()),
+        alist=methods.get("list_bitable_records", AsyncMock()),
+        aupdate=methods.get("update_bitable_record", AsyncMock()),
+    )
     return SimpleNamespace(
         docx=SimpleNamespace(
             v1=SimpleNamespace(
@@ -141,10 +145,26 @@ def test_bitable_field_and_record_methods_use_sdk_async_api() -> None:
     )
     record = AppTableRecord.builder().record_id("rec1").fields({"标题": "内容"}).build()
     create_call = AsyncMock(return_value=_response(SimpleNamespace(record=record)))
+    list_record_call = AsyncMock(
+        return_value=_response(
+            SimpleNamespace(
+                items=[record],
+                has_more=True,
+                page_token="next-record",
+                total=2,
+            )
+        )
+    )
+    updated_record = (
+        AppTableRecord.builder().record_id("rec1").fields({"状态": "是"}).build()
+    )
+    update_call = AsyncMock(return_value=_response(SimpleNamespace(record=updated_record)))
     client = FeishuClient(  # type: ignore[arg-type]
         _sdk_client(
             list_bitable_fields=list_call,
             create_bitable_record=create_call,
+            list_bitable_records=list_record_call,
+            update_bitable_record=update_call,
         )
     )
 
@@ -153,6 +173,18 @@ def test_bitable_field_and_record_methods_use_sdk_async_api() -> None:
     )
     created = asyncio.run(
         client.create_bitable_record("app1", "tbl1", {"标题": "内容"})
+    )
+    records, records_has_more, record_page_token, total = asyncio.run(
+        client.list_bitable_records(
+            "app1",
+            "tbl1",
+            page_size=50,
+            page_token="current-page",
+            filter_expression='CurrentValue.[状态]="是"',
+        )
+    )
+    updated = asyncio.run(
+        client.update_bitable_record("app1", "tbl1", "rec1", {"状态": "是"})
     )
 
     assert fields == [field]
@@ -165,6 +197,18 @@ def test_bitable_field_and_record_methods_use_sdk_async_api() -> None:
     assert created.record_id == "rec1"
     create_request = create_call.await_args.args[0]
     assert create_request.request_body.fields == {"标题": "内容"}
+    assert records == [record]
+    assert records_has_more is True
+    assert record_page_token == "next-record"
+    assert total == 2
+    record_list_request = list_record_call.await_args.args[0]
+    assert record_list_request.page_size == 50
+    assert record_list_request.page_token == "current-page"
+    assert record_list_request.filter == 'CurrentValue.[状态]="是"'
+    assert updated.fields == {"状态": "是"}
+    update_request = update_call.await_args.args[0]
+    assert update_request.record_id == "rec1"
+    assert update_request.request_body.fields == {"状态": "是"}
 
 
 def test_sdk_auth_error_is_user_friendly() -> None:

@@ -61,9 +61,30 @@ class BitableFieldsResult(BaseModel):
 
 
 class BitableRecordResult(BaseModel):
-    """Bitable 新增记录结果。"""
+    """Bitable 新增或更新记录结果。"""
 
     app_token: str
     table_id: str
     record_id: str
     fields: dict[str, Any]
+
+
+class BitableRecordSchema(BaseModel):
+    """Bitable 单条记录。"""
+
+    record_id: str
+    fields: dict[str, Any]
+    created_time: int | None = None
+    last_modified_time: int | None = None
+    record_url: str | None = None
+
+
+class BitableRecordsResult(BaseModel):
+    """Bitable 分页记录查询结果。"""
+
+    app_token: str
+    table_id: str
+    records: list[BitableRecordSchema]
+    has_more: bool
+    page_token: str | None = None
+    total: int | None = None
