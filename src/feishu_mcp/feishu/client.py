@@ -5,11 +5,21 @@ from typing import Any, TypeVar
 
 import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import (
+    AppDashboard,
+    AppTableField,
     AppTableFieldForList,
+    AppTableFieldProperty,
     AppTableRecord,
+    AppTableView,
+    CopyAppDashboardRequest,
+    CopyAppDashboardRequestBody,
+    CreateAppTableFieldRequest,
     CreateAppTableRecordRequest,
+    CreateAppTableViewRequest,
     ListAppTableFieldRequest,
     ListAppTableRecordRequest,
+    ListAppDashboardRequest,
+    ReqView,
     UpdateAppTableRecordRequest,
 )
 from lark_oapi.api.docx.v1 import (
@@ -49,6 +59,7 @@ AUTH_EXCEPTIONS = (
     ObtainAccessTokenException,
 )
 ResponseT = TypeVar("ResponseT")
+BITABLE_FORMULA_FIELD_TYPE = 20
 
 
 class FeishuClient:
@@ -263,6 +274,120 @@ class FeishuClient:
         if not isinstance(updated, AppTableRecord):
             raise FeishuAPIError("飞书更新 Bitable 记录成功，但响应中缺少 record")
         return updated
+
+    async def create_bitable_formula_field(
+        self,
+        app_token: str,
+        table_id: str,
+        field_name: str,
+        formula_expression: str,
+    ) -> AppTableField:
+        field_property = (
+            AppTableFieldProperty.builder()
+            .formula_expression(formula_expression)
+            .build()
+        )
+        field = (
+            AppTableField.builder()
+            .field_name(field_name)
+            .type(BITABLE_FORMULA_FIELD_TYPE)
+            .property(field_property)
+            .build()
+        )
+        request = (
+            CreateAppTableFieldRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .request_body(field)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_field.acreate(request)
+        )
+        created = getattr(data, "field", None)
+        if not isinstance(created, AppTableField):
+            raise FeishuAPIError("飞书创建 Bitable 公式字段成功，但响应中缺少 field")
+        return created
+
+    async def create_bitable_view(
+        self,
+        app_token: str,
+        table_id: str,
+        view_name: str,
+        view_type: str,
+    ) -> AppTableView:
+        view = ReqView.builder().view_name(view_name).view_type(view_type).build()
+        request = (
+            CreateAppTableViewRequest.builder()
+            .app_token(app_token)
+            .table_id(table_id)
+            .request_body(view)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_table_view.acreate(request)
+        )
+        created = getattr(data, "view", None)
+        if not isinstance(created, AppTableView):
+            raise FeishuAPIError("飞书创建 Bitable 视图成功，但响应中缺少 view")
+        return created
+
+    async def list_bitable_dashboards(
+        self,
+        app_token: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> tuple[list[AppDashboard], bool, str | None, int | None]:
+        builder = (
+            ListAppDashboardRequest.builder()
+            .app_token(app_token)
+            .page_size(page_size)
+            .with_share_config(False)
+        )
+        if page_token:
+            builder.page_token(page_token)
+        request = builder.build()
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_dashboard.alist(request)
+        )
+        dashboards = getattr(data, "dashboards", None) or []
+        if not isinstance(dashboards, list) or any(
+            not isinstance(dashboard, AppDashboard) for dashboard in dashboards
+        ):
+            raise FeishuAPIError("飞书 Bitable 仪表盘响应格式不正确")
+        total = getattr(data, "total", None)
+        return (
+            dashboards,
+            bool(getattr(data, "has_more", False)),
+            getattr(data, "page_token", None),
+            total if isinstance(total, int) else None,
+        )
+
+    async def copy_bitable_dashboard(
+        self,
+        app_token: str,
+        block_id: str,
+        name: str,
+    ) -> tuple[str, str]:
+        body = CopyAppDashboardRequestBody.builder().name(name).build()
+        request = (
+            CopyAppDashboardRequest.builder()
+            .app_token(app_token)
+            .block_id(block_id)
+            .request_body(body)
+            .build()
+        )
+        data = await self._call(
+            lambda: self._sdk_client.bitable.v1.app_dashboard.acopy(request)
+        )
+        copied_block_id = getattr(data, "block_id", None)
+        copied_name = getattr(data, "name", None)
+        if not isinstance(copied_block_id, str) or not copied_block_id:
+            raise FeishuAPIError("飞书复制 Bitable 仪表盘成功，但响应中缺少 block_id")
+        if not isinstance(copied_name, str) or not copied_name:
+            raise FeishuAPIError("飞书复制 Bitable 仪表盘成功，但响应中缺少 name")
+        return copied_block_id, copied_name
 
     async def _call(self, operation: Callable[[], Awaitable[ResponseT]]) -> Any:
         try:

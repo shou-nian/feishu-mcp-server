@@ -10,11 +10,16 @@ from feishu_mcp.feishu.errors import FeishuAPIError
 from feishu_mcp.main import run_server
 from feishu_mcp.models.schemas import (
     AppendDocumentResult,
+    BitableDashboardCopyResult,
+    BitableDashboardSchema,
+    BitableDashboardsResult,
     BitableFieldSchema,
     BitableFieldsResult,
+    BitableFormulaFieldResult,
     BitableRecordResult,
     BitableRecordSchema,
     BitableRecordsResult,
+    BitableViewResult,
     CreateDocumentResult,
     DocumentResult,
     UpdateDocumentResult,
@@ -130,7 +135,82 @@ class FakeBitableService:
         )
 
 
-def test_eight_tools_are_registered() -> None:
+class FakeBitableStructureService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def create_formula_field(
+        self,
+        app_token: str,
+        table_id: str,
+        field_name: str,
+        formula_expression: str,
+    ) -> BitableFormulaFieldResult:
+        self.calls.append(
+            (
+                "create_formula_field",
+                (app_token, table_id, field_name, formula_expression),
+            )
+        )
+        return BitableFormulaFieldResult(
+            app_token=app_token,
+            table_id=table_id,
+            field_id="fld_formula",
+            field_name=field_name,
+            formula_expression=formula_expression,
+        )
+
+    async def create_view(
+        self,
+        app_token: str,
+        table_id: str,
+        view_name: str,
+        view_type: str,
+    ) -> BitableViewResult:
+        self.calls.append(
+            ("create_view", (app_token, table_id, view_name, view_type))
+        )
+        return BitableViewResult(
+            app_token=app_token,
+            table_id=table_id,
+            view_id="vew1",
+            view_name=view_name,
+            view_type=view_type,
+        )
+
+    async def list_dashboards(
+        self,
+        app_token: str,
+        *,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> BitableDashboardsResult:
+        self.calls.append(("list_dashboards", (app_token, page_size, page_token)))
+        return BitableDashboardsResult(
+            app_token=app_token,
+            dashboards=[BitableDashboardSchema(block_id="blk1", name="模板")],
+            has_more=False,
+            total=1,
+        )
+
+    async def copy_dashboard(
+        self,
+        app_token: str,
+        source_block_id: str,
+        name: str,
+    ) -> BitableDashboardCopyResult:
+        self.calls.append(
+            ("copy_dashboard", (app_token, source_block_id, name))
+        )
+        return BitableDashboardCopyResult(
+            app_token=app_token,
+            source_block_id=source_block_id,
+            block_id="blk_copy",
+            name=name,
+        )
+
+
+def test_twelve_tools_are_registered() -> None:
     server = create_mcp_server(document_service=FakeDocumentService())  # type: ignore[arg-type]
 
     tools = asyncio.run(server.list_tools())
@@ -144,6 +224,10 @@ def test_eight_tools_are_registered() -> None:
         "create_feishu_bitable_record",
         "list_feishu_bitable_records",
         "update_feishu_bitable_record",
+        "create_feishu_bitable_formula_field",
+        "create_feishu_bitable_view",
+        "list_feishu_bitable_dashboards",
+        "copy_feishu_bitable_dashboard",
     }
     read_tool = next(tool for tool in tools if tool.name == "read_feishu_document")
     assert read_tool.inputSchema["properties"]["document_id"]["minLength"] == 1
@@ -302,6 +386,86 @@ def test_bitable_record_tool_argument_validation() -> None:
                     "record_id": "",
                     "fields": {"状态": "是"},
                 },
+            )
+        )
+
+
+def test_bitable_structure_tools_return_structured_results() -> None:
+    structure_service = FakeBitableStructureService()
+    server = create_mcp_server(
+        document_service=FakeDocumentService(),  # type: ignore[arg-type]
+        bitable_service=FakeBitableService(),  # type: ignore[arg-type]
+        bitable_structure_service=structure_service,  # type: ignore[arg-type]
+    )
+
+    _, formula_result = asyncio.run(
+        server.call_tool(
+            "create_feishu_bitable_formula_field",
+            {
+                "app_token": "app1",
+                "table_id": "tbl1",
+                "field_name": "总价",
+                "formula_expression": "[数量]*[单价]",
+            },
+        )
+    )
+    _, view_result = asyncio.run(
+        server.call_tool(
+            "create_feishu_bitable_view",
+            {
+                "app_token": "app1",
+                "table_id": "tbl1",
+                "view_name": "任务看板",
+                "view_type": "kanban",
+            },
+        )
+    )
+    _, dashboards_result = asyncio.run(
+        server.call_tool(
+            "list_feishu_bitable_dashboards",
+            {"app_token": "app1", "page_size": 50},
+        )
+    )
+    _, copied_result = asyncio.run(
+        server.call_tool(
+            "copy_feishu_bitable_dashboard",
+            {
+                "app_token": "app1",
+                "source_block_id": "blk1",
+                "name": "新仪表盘",
+            },
+        )
+    )
+
+    assert formula_result["field_id"] == "fld_formula"  # type: ignore[index]
+    assert view_result["view_id"] == "vew1"  # type: ignore[index]
+    assert dashboards_result["dashboards"][0]["block_id"] == "blk1"  # type: ignore[index]
+    assert copied_result == {  # type: ignore[comparison-overlap]
+        "app_token": "app1",
+        "source_block_id": "blk1",
+        "block_id": "blk_copy",
+        "name": "新仪表盘",
+    }
+    assert structure_service.calls == [
+        ("create_formula_field", ("app1", "tbl1", "总价", "[数量]*[单价]")),
+        ("create_view", ("app1", "tbl1", "任务看板", "kanban")),
+        ("list_dashboards", ("app1", 50, None)),
+        ("copy_dashboard", ("app1", "blk1", "新仪表盘")),
+    ]
+
+
+def test_bitable_structure_tool_argument_validation() -> None:
+    server = create_mcp_server(
+        document_service=FakeDocumentService(),  # type: ignore[arg-type]
+        bitable_service=FakeBitableService(),  # type: ignore[arg-type]
+        bitable_structure_service=FakeBitableStructureService(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ToolError, match="validation error"):
+        asyncio.run(
+            server.call_tool(
+                "list_feishu_bitable_dashboards",
+                {"app_token": "app1", "page_size": 0},
             )
         )
 

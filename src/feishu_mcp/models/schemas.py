@@ -88,3 +88,49 @@ class BitableRecordsResult(BaseModel):
     has_more: bool
     page_token: str | None = None
     total: int | None = None
+
+
+class BitableFormulaFieldResult(BaseModel):
+    """Bitable 公式字段创建结果。"""
+
+    app_token: str
+    table_id: str
+    field_id: str
+    field_name: str
+    formula_expression: str
+
+
+class BitableViewResult(BaseModel):
+    """Bitable 视图创建结果。"""
+
+    app_token: str
+    table_id: str
+    view_id: str
+    view_name: str
+    view_type: str
+
+
+class BitableDashboardSchema(BaseModel):
+    """Bitable 仪表盘概要。"""
+
+    block_id: str
+    name: str
+
+
+class BitableDashboardsResult(BaseModel):
+    """Bitable 分页仪表盘查询结果。"""
+
+    app_token: str
+    dashboards: list[BitableDashboardSchema]
+    has_more: bool
+    page_token: str | None = None
+    total: int | None = None
+
+
+class BitableDashboardCopyResult(BaseModel):
+    """Bitable 仪表盘复制结果。"""
+
+    app_token: str
+    source_block_id: str
+    block_id: str
+    name: str

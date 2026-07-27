@@ -1,10 +1,10 @@
 # 飞书 MCP Server
 
-一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写以及 Bitable（多维表格）字段、记录查询和记录新增、更新。
+一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写，以及 Bitable（多维表格）的字段/记录查询、记录写入、公式字段、视图和仪表盘模板复制。
 
 ## 功能与设计
 
-Server 暴露八个 Tool：
+Server 暴露十二个 Tool：
 
 - `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
 - `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
@@ -14,6 +14,10 @@ Server 暴露八个 Tool：
 - `list_feishu_bitable_records(app_token, table_id, filter_expression, page_size, page_token)`：分页查询记录，可使用 filter 表达式定位目标行并获取 `record_id`。
 - `create_feishu_bitable_record(app_token, table_id, fields)`：读取实时字段结构，校验并转换字段值后新增记录。
 - `update_feishu_bitable_record(app_token, table_id, record_id, fields)`：读取实时字段结构后，通过 `record_id` 更新指定行。
+- `create_feishu_bitable_formula_field(app_token, table_id, field_name, formula_expression)`：创建公式字段。
+- `create_feishu_bitable_view(app_token, table_id, view_name, view_type)`：创建表格、看板、画册、甘特或表单视图。
+- `list_feishu_bitable_dashboards(app_token, page_size, page_token)`：分页获取仪表盘模板及其 `block_id`。
+- `copy_feishu_bitable_dashboard(app_token, source_block_id, name)`：复制已有仪表盘及其中全部组件。
 
 追加 Tool 的输入示例：
 
@@ -38,6 +42,10 @@ Server 暴露八个 Tool：
 - `GET /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records`：分页或按 filter 查询 Bitable 记录。
 - `POST /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records`：新增 Bitable 记录。
 - `PUT /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}`：更新指定 Bitable 记录。
+- `POST /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/fields`：创建公式字段。
+- `POST /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/views`：创建视图。
+- `GET /open-apis/bitable/v1/apps/{app_token}/dashboards`：分页查询仪表盘。
+- `POST /open-apis/bitable/v1/apps/{app_token}/dashboards/{block_id}/copy`：复制仪表盘和已有组件。
 
 鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。应用凭证、Token 获取与缓存、API 请求序列化均由飞书官方 `lark-oapi` SDK 管理；业务代码调用 SDK 提供的 `aget`、`alist`、`acreate`、`abatch_delete` 等原生异步接口，不再自行发送 HTTP 请求。
 
@@ -140,6 +148,57 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 
 公式、查找引用、创建/修改时间、创建/修改人和自动编号属于只读字段，新增或更新记录时会被拒绝。单选和多选值必须已经存在于字段选项中；未知字段、错误类型和空字段对象都会在调用写入 API 前返回清晰错误。
 
+## Bitable 公式字段、视图与仪表盘
+
+创建公式字段时，表达式会按飞书 Bitable 公式语法原样提交。示例：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx",
+  "field_name": "总价",
+  "formula_expression": "[数量]*[单价]"
+}
+```
+
+创建结果返回 `field_id`、字段名称和公式表达式。公式字段本身是计算字段，不能通过记录新增或更新 Tool 直接写值。
+
+创建视图示例：
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "table_id": "tblxxxxxxxx",
+  "view_name": "任务看板",
+  "view_type": "kanban"
+}
+```
+
+支持的 `view_type`：
+
+| 值 | 视图 |
+| --- | --- |
+| `grid` | 表格视图（默认） |
+| `kanban` | 看板视图 |
+| `gallery` | 画册视图 |
+| `gantt` | 甘特视图 |
+| `form` | 表单视图 |
+
+飞书公开 Bitable API 当前没有“创建单个仪表盘组件”的接口，官方 `lark-oapi 1.7.1` 只提供仪表盘列表与整表复制。因此 Server 不会调用未公开接口，而是通过模板复制创建带组件的仪表盘：
+
+1. 调用 `list_feishu_bitable_dashboards`，获取已有模板仪表盘的 `block_id`。
+2. 调用 `copy_feishu_bitable_dashboard`，传入 `source_block_id` 和新名称。
+
+```json
+{
+  "app_token": "bascnxxxxxxxx",
+  "source_block_id": "blkxxxxxxxx",
+  "name": "月度运营仪表盘"
+}
+```
+
+复制结果会返回新的 `block_id`，模板中的图表、指标卡等组件会一起复制。若需要从零新增或修改单个组件，必须等待飞书开放对应公开 API，或先在飞书界面创建模板组件再使用复制 Tool。
+
 ## 环境准备
 
 要求：
@@ -154,7 +213,7 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 uv sync
 ```
 
-飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取、记录读取、新增和更新相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
+飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取/创建、记录读取/新增/更新、视图创建和仪表盘读取/复制相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
 
 ## 配置
 
@@ -240,7 +299,7 @@ uv run pytest
 uv run ruff check main.py src tests
 ```
 
-测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、记录查询、指定行更新、单双选规范化、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、记录查询、指定行更新、单双选规范化、公式字段、视图、仪表盘列表/复制、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
 
 ## 项目结构
 
@@ -256,6 +315,7 @@ src/
     │   ├── client.py            # 官方 SDK Docx/Bitable 异步接口封装
     │   ├── document.py          # Docx 业务、Markdown 与表格转换
     │   ├── bitable.py           # Bitable schema、记录查询、值校验与记录写入
+    │   ├── bitable_structure.py # Bitable 公式字段、视图和仪表盘模板
     │   └── errors.py            # 用户友好的异常
     ├── tools/tools.py           # MCP Tools 注册（避免与官方 mcp 包冲突）
     ├── models/schemas.py        # 结构化响应模型

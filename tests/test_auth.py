@@ -5,7 +5,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from lark_oapi.api.bitable.v1 import AppTableFieldForList, AppTableRecord
+from lark_oapi.api.bitable.v1 import (
+    AppDashboard,
+    AppTableField,
+    AppTableFieldForList,
+    AppTableFieldProperty,
+    AppTableRecord,
+    AppTableView,
+)
 from lark_oapi.api.docx.v1 import Block, Document, Text
 from lark_oapi.core.exception import ObtainAccessTokenException
 
@@ -28,11 +35,21 @@ def _sdk_client(**methods: AsyncMock) -> SimpleNamespace:
         acreate=methods.get("create_children", AsyncMock()),
         abatch_delete=methods.get("delete_children", AsyncMock()),
     )
-    app_table_field = SimpleNamespace(alist=methods.get("list_bitable_fields", AsyncMock()))
+    app_table_field = SimpleNamespace(
+        alist=methods.get("list_bitable_fields", AsyncMock()),
+        acreate=methods.get("create_bitable_formula_field", AsyncMock()),
+    )
     app_table_record = SimpleNamespace(
         acreate=methods.get("create_bitable_record", AsyncMock()),
         alist=methods.get("list_bitable_records", AsyncMock()),
         aupdate=methods.get("update_bitable_record", AsyncMock()),
+    )
+    app_table_view = SimpleNamespace(
+        acreate=methods.get("create_bitable_view", AsyncMock())
+    )
+    app_dashboard = SimpleNamespace(
+        alist=methods.get("list_bitable_dashboards", AsyncMock()),
+        acopy=methods.get("copy_bitable_dashboard", AsyncMock()),
     )
     return SimpleNamespace(
         docx=SimpleNamespace(
@@ -46,6 +63,8 @@ def _sdk_client(**methods: AsyncMock) -> SimpleNamespace:
             v1=SimpleNamespace(
                 app_table_field=app_table_field,
                 app_table_record=app_table_record,
+                app_table_view=app_table_view,
+                app_dashboard=app_dashboard,
             )
         ),
     )
@@ -209,6 +228,92 @@ def test_bitable_field_and_record_methods_use_sdk_async_api() -> None:
     update_request = update_call.await_args.args[0]
     assert update_request.record_id == "rec1"
     assert update_request.request_body.fields == {"状态": "是"}
+
+
+def test_bitable_structure_methods_use_sdk_async_api() -> None:
+    property_ = (
+        AppTableFieldProperty.builder().formula_expression("[数量]*[单价]").build()
+    )
+    formula_field = (
+        AppTableField.builder()
+        .field_id("fld_formula")
+        .field_name("总价")
+        .type(20)
+        .property(property_)
+        .build()
+    )
+    formula_call = AsyncMock(
+        return_value=_response(SimpleNamespace(field=formula_field))
+    )
+    view = (
+        AppTableView.builder()
+        .view_id("vew1")
+        .view_name("任务看板")
+        .view_type("kanban")
+        .build()
+    )
+    view_call = AsyncMock(return_value=_response(SimpleNamespace(view=view)))
+    dashboard = AppDashboard.builder().block_id("blk1").name("运营仪表盘").build()
+    list_dashboard_call = AsyncMock(
+        return_value=_response(
+            SimpleNamespace(
+                dashboards=[dashboard],
+                has_more=True,
+                page_token="next-dashboard",
+                total=2,
+            )
+        )
+    )
+    copy_dashboard_call = AsyncMock(
+        return_value=_response(SimpleNamespace(block_id="blk2", name="运营仪表盘副本"))
+    )
+    client = FeishuClient(  # type: ignore[arg-type]
+        _sdk_client(
+            create_bitable_formula_field=formula_call,
+            create_bitable_view=view_call,
+            list_bitable_dashboards=list_dashboard_call,
+            copy_bitable_dashboard=copy_dashboard_call,
+        )
+    )
+
+    created_field = asyncio.run(
+        client.create_bitable_formula_field("app1", "tbl1", "总价", "[数量]*[单价]")
+    )
+    created_view = asyncio.run(
+        client.create_bitable_view("app1", "tbl1", "任务看板", "kanban")
+    )
+    dashboards, has_more, page_token, total = asyncio.run(
+        client.list_bitable_dashboards(
+            "app1",
+            page_size=50,
+            page_token="current-dashboard",
+        )
+    )
+    block_id, name = asyncio.run(
+        client.copy_bitable_dashboard("app1", "blk1", "运营仪表盘副本")
+    )
+
+    assert created_field.field_id == "fld_formula"
+    formula_request = formula_call.await_args.args[0]
+    assert formula_request.request_body.type == 20
+    assert formula_request.request_body.property.formula_expression == "[数量]*[单价]"
+    assert created_view.view_id == "vew1"
+    view_request = view_call.await_args.args[0]
+    assert view_request.request_body.view_name == "任务看板"
+    assert view_request.request_body.view_type == "kanban"
+    assert dashboards == [dashboard]
+    assert has_more is True
+    assert page_token == "next-dashboard"
+    assert total == 2
+    list_request = list_dashboard_call.await_args.args[0]
+    assert list_request.page_size == 50
+    assert list_request.page_token == "current-dashboard"
+    assert list_request.with_share_config is False
+    assert block_id == "blk2"
+    assert name == "运营仪表盘副本"
+    copy_request = copy_dashboard_call.await_args.args[0]
+    assert copy_request.block_id == "blk1"
+    assert copy_request.request_body.name == "运营仪表盘副本"
 
 
 def test_sdk_auth_error_is_user_friendly() -> None:

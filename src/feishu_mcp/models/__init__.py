@@ -2,11 +2,16 @@
 
 from feishu_mcp.models.schemas import (
     AppendDocumentResult,
+    BitableDashboardCopyResult,
+    BitableDashboardSchema,
+    BitableDashboardsResult,
     BitableFieldSchema,
     BitableFieldsResult,
+    BitableFormulaFieldResult,
     BitableRecordResult,
     BitableRecordSchema,
     BitableRecordsResult,
+    BitableViewResult,
     CreateDocumentResult,
     DocumentResult,
     UpdateDocumentResult,
@@ -14,11 +19,16 @@ from feishu_mcp.models.schemas import (
 
 __all__ = [
     "AppendDocumentResult",
+    "BitableDashboardCopyResult",
+    "BitableDashboardSchema",
+    "BitableDashboardsResult",
     "BitableFieldSchema",
     "BitableFieldsResult",
+    "BitableFormulaFieldResult",
     "BitableRecordResult",
     "BitableRecordSchema",
     "BitableRecordsResult",
+    "BitableViewResult",
     "CreateDocumentResult",
     "DocumentResult",
     "UpdateDocumentResult",
