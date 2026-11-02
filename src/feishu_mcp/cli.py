@@ -4,7 +4,7 @@ import argparse
 import logging
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Sequence
@@ -192,12 +192,9 @@ def _wait_for_callback(
 
 @dataclass(slots=True)
 class _CallbackResult:
-    event: threading.Event
+    event: threading.Event = field(default_factory=threading.Event)
     code: str | None = None
     error: str | None = None
-
-    def __init__(self) -> None:
-        self.event = threading.Event()
 
 
 def _first(parameters: dict[str, list[str]], key: str) -> str | None:
