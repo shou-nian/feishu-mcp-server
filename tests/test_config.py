@@ -1,5 +1,7 @@
 """环境变量配置测试。"""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -26,3 +28,38 @@ def test_app_credentials_are_read_from_environment(monkeypatch: pytest.MonkeyPat
 
     assert settings.feishu_app_id == "cli_test"
     assert settings.feishu_app_secret.get_secret_value() == "secret"
+    assert settings.feishu_auth_mode == "tenant"
+    assert settings.user_scope_list == [
+        "docx:document",
+        "bitable:app",
+        "wiki:wiki",
+        "drive:drive",
+        "offline_access",
+    ]
+
+
+def test_user_auth_settings_are_read_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "secret")
+    monkeypatch.setenv("FEISHU_AUTH_MODE", "user")
+    monkeypatch.setenv("FEISHU_REDIRECT_URI", "http://127.0.0.1:9876/callback")
+    monkeypatch.setenv("FEISHU_USER_SCOPES", "docx:document wiki:wiki offline_access")
+    monkeypatch.setenv("FEISHU_TOKEN_FILE", "~/custom-tokens.json")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.feishu_auth_mode == "user"
+    assert settings.feishu_redirect_uri == "http://127.0.0.1:9876/callback"
+    assert settings.feishu_token_file == Path("~/custom-tokens.json").expanduser()
+    assert settings.user_scope_list == ["docx:document", "wiki:wiki", "offline_access"]
+
+
+def test_invalid_auth_mode_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "secret")
+    monkeypatch.setenv("FEISHU_AUTH_MODE", "oauth")
+
+    with pytest.raises(ValidationError, match="FEISHU_AUTH_MODE"):
+        Settings(_env_file=None)  # type: ignore[call-arg]

@@ -1,4 +1,4 @@
-"""飞书 MCP Server 的 stdio 入口。"""
+"""飞书 MCP Server 的 stdio 运行生命周期。"""
 
 import asyncio
 import logging
@@ -7,11 +7,7 @@ from types import FrameType
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import ValidationError
-
-from feishu_mcp.config.settings import get_settings
 from feishu_mcp.tools import mcp
-from feishu_mcp.utils.logger import configure_logging
 
 LOGGER = logging.getLogger(__name__)
 SHUTDOWN_SIGNALS = tuple(
@@ -75,21 +71,11 @@ async def run_server(
 
 
 def main() -> None:
-    """命令行入口；仅向 stderr 写日志，避免破坏 MCP stdio 协议。"""
+    """委托 CLI 解析 serve/login 命令。"""
 
-    try:
-        settings = get_settings()
-        configure_logging(settings.log_level)
-        asyncio.run(run_server())
-    except KeyboardInterrupt:
-        LOGGER.info("飞书 MCP Server 已停止")
-    except ValidationError:
-        configure_logging()
-        LOGGER.error("配置错误：请设置有效的 FEISHU_APP_ID 和 FEISHU_APP_SECRET")
-        raise SystemExit(2) from None
-    except Exception as exc:
-        LOGGER.error("飞书 MCP Server 启动或运行失败：%s", exc)
-        raise SystemExit(1) from None
+    from feishu_mcp.cli import main as cli_main
+
+    cli_main()
 
 
 if __name__ == "__main__":

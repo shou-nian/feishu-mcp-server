@@ -51,9 +51,7 @@ BLOCK_PROPERTY_BY_TYPE = {
     17: "todo",
 }
 
-INLINE_PATTERN = re.compile(
-    r"(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\))"
-)
+INLINE_PATTERN = re.compile(r"(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\([^)]+\))")
 TABLE_DELIMITER = re.compile(r"^:?-{3,}:?$")
 
 
@@ -75,10 +73,11 @@ class FeishuDocumentService:
     async def read_document(self, document_id: str) -> DocumentResult:
         """读取标题和全部 blocks，并转换为包含表格的 Markdown。"""
 
-        document = await self._client.get_document(document_id)
-        blocks = await self._list_blocks(document_id)
+        resolved_id = await self._client.resolve_document_id(document_id)
+        document = await self._client.get_document(resolved_id)
+        blocks = await self._list_blocks(resolved_id)
         return DocumentResult(
-            document_id=document_id,
+            document_id=resolved_id,
             title=document.title or "",
             content=blocks_to_markdown(blocks),
             blocks=[block_to_dict(block) for block in blocks],
@@ -101,41 +100,43 @@ class FeishuDocumentService:
     async def update_document(self, document_id: str, content: str) -> UpdateDocumentResult:
         """删除根 block 下的旧正文，再写入 Markdown 转换后的新正文。"""
 
-        existing_blocks = await self._list_blocks(document_id)
+        resolved_id = await self._client.resolve_document_id(document_id)
+        existing_blocks = await self._list_blocks(resolved_id)
         root_children = [
             block
             for block in existing_blocks
-            if block.block_id != document_id and block.parent_id == document_id
+            if block.block_id != resolved_id and block.parent_id == resolved_id
         ]
         if root_children:
             await self._client.delete_block_children(
-                document_id,
-                document_id,
+                resolved_id,
+                resolved_id,
                 start_index=0,
                 end_index=len(root_children),
             )
 
         blocks = markdown_to_blocks(content)
-        await self._insert_blocks(document_id, blocks)
-        return UpdateDocumentResult(document_id=document_id, block_count=len(blocks))
+        await self._insert_blocks(resolved_id, blocks)
+        return UpdateDocumentResult(document_id=resolved_id, block_count=len(blocks))
 
     async def append_document(self, document_id: str, content: str) -> AppendDocumentResult:
         """在根节点末尾追加 Markdown blocks，不删除或改写任何已有内容。"""
 
+        resolved_id = await self._client.resolve_document_id(document_id)
         blocks = markdown_to_blocks(content)
-        existing_blocks = await self._list_blocks(document_id)
+        existing_blocks = await self._list_blocks(resolved_id)
         root_block_count = sum(
-            block.block_id != document_id and block.parent_id == document_id
+            block.block_id != resolved_id and block.parent_id == resolved_id
             for block in existing_blocks
         )
         if blocks:
             await self._insert_blocks(
-                document_id,
+                resolved_id,
                 blocks,
                 start_index=root_block_count,
             )
         return AppendDocumentResult(
-            document_id=document_id,
+            document_id=resolved_id,
             appended=bool(blocks),
             block_count=len(blocks),
         )
@@ -240,7 +241,9 @@ def markdown_to_blocks(content: str) -> list[MarkdownBlock]:
                 index += 1
             if index < len(lines):
                 index += 1
-            blocks.append(MarkdownBlock(_text_block(14, "code", "\n".join(code_lines), inline=False)))
+            blocks.append(
+                MarkdownBlock(_text_block(14, "code", "\n".join(code_lines), inline=False))
+            )
             continue
 
         table = _parse_markdown_table(lines, index)
@@ -473,8 +476,7 @@ def _table_to_markdown(block: Block, block_index: dict[str, Block]) -> str:
     cell_values.extend([""] * max(0, expected - len(cell_values)))
 
     rows = [
-        cell_values[offset : offset + column_size]
-        for offset in range(0, expected, column_size)
+        cell_values[offset : offset + column_size] for offset in range(0, expected, column_size)
     ]
     markdown_lines = [_format_table_row(rows[0])]
     markdown_lines.append(_format_table_row(["---"] * column_size))
@@ -487,9 +489,7 @@ def _table_cell_text(cell_id: str, block_index: dict[str, Block]) -> str:
     if cell is None:
         return ""
     child_ids = cell.children or [
-        block_id
-        for block_id, block in block_index.items()
-        if block.parent_id == cell_id
+        block_id for block_id, block in block_index.items() if block.parent_id == cell_id
     ]
     rendered = [
         text

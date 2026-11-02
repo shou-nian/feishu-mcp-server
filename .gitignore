@@ -9,6 +9,7 @@ wheels/
 # Virtual environments
 .venv
 .env
+.feishu-mcp/
 .pytest_cache/
 .ruff_cache/
 

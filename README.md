@@ -1,12 +1,12 @@
 # 飞书 MCP Server
 
-一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持 Docx 文档读写，以及 Bitable（多维表格）的字段/记录查询、记录写入、公式字段、视图和仪表盘模板复制。
+一个使用 Python、官方 MCP SDK、`asyncio` 和飞书官方 `lark-oapi` SDK 实现的飞书 MCP Server。它通过 stdio 与 Codex 等 MCP Client 通信，支持应用身份（`tenant_access_token`）和用户身份（`user_access_token`）双模鉴权，支持 Docx/Wiki 文档读写，以及 Bitable（多维表格）的字段/记录查询、记录写入、公式字段、视图和仪表盘模板复制。
 
 ## 功能与设计
 
 Server 暴露十二个 Tool：
 
-- `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown。
+- `read_feishu_document(document_id)`：读取标题、完整 block 列表，并返回包含表格的 Markdown；`document_id` 兼容原始 Docx ID、Docx URL 和 Wiki URL。
 - `create_feishu_document(title, content)`：创建文档，将 Markdown（含表格）转为飞书 blocks 后写入。
 - `update_feishu_document(document_id, content)`：删除文档根节点下的原正文，然后以 Markdown（含表格）全量替换。
 - `append_feishu_document(document_id, content)`：在已有文档末尾追加普通文本、Markdown 或表格，不删除或改写现有内容。
@@ -32,7 +32,9 @@ Server 暴露十二个 Tool：
 
 对应的飞书 API：
 
-- `POST /open-apis/auth/v3/tenant_access_token/internal`：使用 App ID 和 App Secret 获取 `tenant_access_token`。
+- `POST /open-apis/auth/v3/tenant_access_token/internal`：tenant 模式下由官方 SDK 获取 `tenant_access_token`。
+- `POST https://accounts.feishu.cn/oauth/v3/token`：user 模式下用授权码换取或刷新 `user_access_token`。
+- `GET /open-apis/wiki/v2/spaces/get_node`：把 Wiki 节点解析为实际 Docx token。
 - `GET /open-apis/docx/v1/documents/{document_id}`：读取文档元信息。
 - `GET /open-apis/docx/v1/documents/{document_id}/blocks`：分页读取 block 结构。
 - `POST /open-apis/docx/v1/documents`：创建文档。
@@ -47,7 +49,37 @@ Server 暴露十二个 Tool：
 - `GET /open-apis/bitable/v1/apps/{app_token}/dashboards`：分页查询仪表盘。
 - `POST /open-apis/bitable/v1/apps/{app_token}/dashboards/{block_id}/copy`：复制仪表盘和已有组件。
 
-鉴权仅使用飞书自建应用的 `tenant_access_token`，不使用用户 OAuth。应用凭证、Token 获取与缓存、API 请求序列化均由飞书官方 `lark-oapi` SDK 管理；业务代码调用 SDK 提供的 `aget`、`alist`、`acreate`、`abatch_delete` 等原生异步接口，不再自行发送 HTTP 请求。
+鉴权由 `FEISHU_AUTH_MODE` 控制。`tenant`（默认）沿用应用身份和 SDK 内置 token 缓存；`user` 通过 Authorization Code Flow 获取用户身份 token，并自动刷新、原子持久化。两种模式都使用 `lark-oapi` 完成 OAuth 换票、token 刷新和 API 请求序列化，不自行发送 HTTP 请求。
+
+## 鉴权模式与用户登录
+
+`tenant` 模式适合文档已经显式授权给应用的场景，无需交互登录。
+
+`user` 模式适合读取当前用户本人可见的个人文档、知识库和多维表格，不需要逐个给应用添加协作者。该模式需要先完成一次 OAuth 授权：
+
+```bash
+uv run feishu-mcp login
+```
+
+命令会输出授权链接并监听 `FEISHU_REDIRECT_URI`。授权完成后 token 保存到 `FEISHU_TOKEN_FILE`，默认是 `~/.feishu-mcp/tokens.json`，该目录不会进入项目仓库。
+
+如果回调地址无法被浏览器访问，可以手工复制回调 URL 中的 `code`：
+
+```bash
+uv run feishu-mcp login --manual
+```
+
+user 模式启动示例：
+
+```dotenv
+FEISHU_AUTH_MODE=user
+FEISHU_REDIRECT_URI=http://127.0.0.1:8765/callback
+FEISHU_USER_SCOPES=docx:document bitable:app wiki:wiki drive:drive offline_access
+```
+
+授权成功后，Server 会在 access token 到期前 5 分钟自动刷新；刷新后的新 `refresh_token` 会立即覆盖保存。refresh token 过期或 token 文件损坏时，Tool 会返回“请执行 `uv run feishu-mcp login` 重新授权”，不会向 MCP Client 返回 traceback。
+
+注意：user 模式下的创建、更新、追加和 Bitable 写入都会以授权用户身份落库。不要在多人之间共享同一份 token 文件；token 失效后需要由对应账号重新登录。
 
 当前 Markdown 转换支持普通段落、1—9 级标题、无序/有序列表、任务列表、引用、分隔线、代码块、标准管道表格，以及粗体、删除线、行内代码和链接。未支持的复杂飞书 block 仍会保留在 `blocks` 原始响应中，但不会凭空转换成 Markdown。
 
@@ -213,7 +245,7 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 uv sync
 ```
 
-飞书应用需要开通与 Docx 文档读取、创建、编辑，以及 Bitable 字段读取/创建、记录读取/新增/更新、视图创建和仪表盘读取/复制相关的权限，并发布可用版本。目标文档和多维表格还必须向应用开放访问权限。
+tenant 模式需要开通应用身份权限，并将目标文档/多维表格授权给应用。user 模式需要在开发者后台申请对应的**用户身份权限**（参考 scope：`docx:document`、`bitable:app`、`wiki:wiki`、`drive:drive`、`offline_access`，实际 key 以后台展示为准），并在安全设置中登记 `FEISHU_REDIRECT_URI`，修改权限后发布新版本。
 
 ## 配置
 
@@ -230,6 +262,10 @@ FEISHU_APP_SECRET=xxxxx
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `FEISHU_AUTH_MODE` | `tenant` | 鉴权模式：`tenant` 或 `user` |
+| `FEISHU_REDIRECT_URI` | `http://127.0.0.1:8765/callback` | user 模式 OAuth 回调地址，必须与开发者后台登记值一致 |
+| `FEISHU_USER_SCOPES` | `docx:document bitable:app wiki:wiki drive:drive offline_access` | user 模式申请的权限，空格分隔 |
+| `FEISHU_TOKEN_FILE` | `~/.feishu-mcp/tokens.json` | 用户 token 文件，建议保持在仓库外 |
 | `FEISHU_DOCUMENT_URL_BASE` | `https://feishu.cn/docx` | 创建结果中的文档 URL 前缀；私有化域名可覆盖 |
 | `FEISHU_REQUEST_TIMEOUT` | `15` | HTTP 超时秒数 |
 | `LOG_LEVEL` | `INFO` | stderr 日志级别 |
@@ -245,6 +281,13 @@ uv run feishu-mcp
 `feishu-mcp` 是通过 `project.scripts` 安装的推荐入口。根目录入口 `uv run python main.py` 仍可兼容使用。
 
 Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的 stdout。stdin 正常关闭、任务取消，或进程收到 `SIGINT`/`SIGTERM` 时，Server 会取消服务任务并退出 MCP 生命周期。
+
+无参数或 `serve` 子命令启动 stdio Server；`login` 子命令只执行一次性用户授权，不启动 MCP 服务：
+
+```bash
+uv run feishu-mcp serve
+uv run feishu-mcp login --manual
+```
 
 缺少配置时进程会输出简明错误并以状态码 `2` 退出，不会把 Python traceback 返回给 MCP Client。
 
@@ -265,7 +308,8 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx"
+        "FEISHU_APP_SECRET": "xxxxx",
+        "FEISHU_AUTH_MODE": "user"
       }
     }
   }
@@ -285,7 +329,8 @@ Server 使用 stdio 传输。日志只写入 stderr，不会污染 MCP 协议的
       ],
       "env": {
         "FEISHU_APP_ID": "cli_xxxxx",
-        "FEISHU_APP_SECRET": "xxxxx"
+        "FEISHU_APP_SECRET": "xxxxx",
+        "FEISHU_AUTH_MODE": "user"
       }
     }
   }
@@ -299,7 +344,7 @@ uv run pytest
 uv run ruff check main.py src tests
 ```
 
-测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、记录查询、指定行更新、单双选规范化、公式字段、视图、仪表盘列表/复制、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
+测试中的所有飞书调用都使用官方 SDK 模型、`AsyncMock` 或内存 fake client，不会访问真实飞书数据。覆盖范围包括 tenant/user 双模式配置、user token 注入、OAuth 授权 URL、授权码换票、过期前刷新、refresh token 轮换、token 文件原子存储与损坏容错、Docx/Wiki URL 解析、SDK 客户端配置、鉴权与 API 错误转换，文档创建/读取/全量更新/追加、分页、Markdown 与表格转换和表格单元格写入，以及 Bitable 字段分页、记录查询、指定行更新、单双选规范化、公式字段、视图、仪表盘列表/复制、只读字段、非法选项、未知字段和记录新增。MCP Tool 注册、参数校验、错误转换和优雅退出也有独立覆盖。
 
 ## 项目结构
 
@@ -308,10 +353,13 @@ main.py                          # 兼容的项目根目录入口
 src/
 └── feishu_mcp/                  # 可安装的 Python 包
     ├── __init__.py              # feishu-mcp console script 入口
+    ├── cli.py                   # serve/login 命令与本地 OAuth 回调
     ├── main.py                  # stdio 生命周期和优雅退出
     ├── config/settings.py       # 环境变量配置
     ├── feishu/
     │   ├── auth.py              # lark-oapi Client 与应用鉴权配置
+    │   ├── oauth.py             # 用户 OAuth 换票、请求注入和自动刷新
+    │   ├── token_store.py       # 用户 token 原子持久化
     │   ├── client.py            # 官方 SDK Docx/Bitable 异步接口封装
     │   ├── document.py          # Docx 业务、Markdown 与表格转换
     │   ├── bitable.py           # Bitable schema、记录查询、值校验与记录写入

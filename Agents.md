@@ -134,50 +134,23 @@ feishu-mcp-server
 
 # 三、飞书鉴权要求
 
-## 使用飞书智能体应用鉴权
+## 双模鉴权
 
-禁止使用：
+默认使用应用身份 `tenant_access_token`：
 
-- 用户OAuth
-- Authorization Code Flow
+- App ID + App Secret
+- 由官方 `lark-oapi` SDK 获取、缓存和刷新
+- 目标文档需要显式授权给应用
 
-必须使用：
+需要访问授权用户本人可见、但未授权给应用的 Docx、Wiki 或 Bitable 时，可使用用户身份 `user_access_token`：
 
-```
-App ID
-+
-App Secret
-```
+- 使用 Authorization Code Flow
+- 通过 `FEISHU_AUTH_MODE=user` 启用
+- 通过 `uv run feishu-mcp login` 完成一次性授权
+- 通过官方 SDK 换取和刷新 token
+- refresh token 必须原子保存到仓库外，权限仅允许当前用户访问
 
-获取：
-
-```
-tenant_access_token
-```
-
-流程：
-
-```
-App ID
-   |
-   |
-App Secret
-   |
-   v
-
-POST
-/open-apis/auth/v3/tenant_access_token/internal
-
-   |
-   v
-
-tenant_access_token
-
-   |
-   v
-
-调用文档API
-```
+两种模式都由 `FEISHU_AUTH_MODE` 控制，不得绕过官方 SDK 自行发送鉴权 HTTP 请求。
 
 ---
 
@@ -188,6 +161,15 @@ tenant_access_token
 ```
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
+FEISHU_AUTH_MODE=tenant
+```
+
+user 模式额外配置：
+
+```
+FEISHU_REDIRECT_URI=http://127.0.0.1:8765/callback
+FEISHU_USER_SCOPES=docx:document bitable:app wiki:wiki drive:drive offline_access
+FEISHU_TOKEN_FILE=~/.feishu-mcp/tokens.json
 ```
 
 提供：
@@ -201,6 +183,7 @@ FEISHU_APP_SECRET=
 ```
 FEISHU_APP_ID=cli_xxxxx
 FEISHU_APP_SECRET=xxxxx
+FEISHU_AUTH_MODE=tenant
 ```
 
 ---
@@ -225,16 +208,16 @@ class FeishuClient:
 
 要求：
 
-- 自动获取tenant_access_token
-- 自动添加Authorization Header
-- token缓存
-- token过期自动刷新
+- tenant 模式由官方 SDK 自动获取和缓存 tenant_access_token
+- user 模式从安全 token 文件读取 user_access_token，并在到期前自动刷新
+- 所有请求通过官方 SDK 的 RequestOption 注入身份
+- token 过期或 refresh token 失效时返回明确的重新授权提示
 
 请求Header：
 
 ```
 Authorization:
-Bearer {tenant_access_token}
+Bearer {tenant_access_token | user_access_token}
 ```
 
 ---

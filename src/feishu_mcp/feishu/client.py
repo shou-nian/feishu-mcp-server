@@ -1,7 +1,8 @@
 """基于飞书官方 lark-oapi SDK 的异步 Docx/Bitable Client。"""
 
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
+from urllib.parse import unquote, urlsplit
 
 import lark_oapi as lark
 from lark_oapi.api.bitable.v1 import (
@@ -34,16 +35,19 @@ from lark_oapi.api.docx.v1 import (
     GetDocumentRequest,
     ListDocumentBlockRequest,
 )
+from lark_oapi.api.wiki.v2 import GetNodeSpaceRequest, Node
 from lark_oapi.core.exception import (
     AccessTokenException,
     ClientAssertionException,
     NoAuthorizationException,
     ObtainAccessTokenException,
 )
+from lark_oapi.core.model import RequestOption
 
 from feishu_mcp.config.settings import Settings
 from feishu_mcp.feishu.auth import build_lark_client
 from feishu_mcp.feishu.errors import FeishuAPIError, FeishuAuthError
+from feishu_mcp.feishu.oauth import FeishuOAuthService
 
 ERROR_MESSAGES = {
     99991663: "飞书鉴权失败，请检查 FEISHU_APP_ID 和 FEISHU_APP_SECRET",
@@ -60,27 +64,77 @@ AUTH_EXCEPTIONS = (
 )
 ResponseT = TypeVar("ResponseT")
 BITABLE_FORMULA_FIELD_TYPE = 20
+RequestOptionProvider = Callable[[], Awaitable[RequestOption]]
 
 
 class FeishuClient:
     """对官方 SDK Docx/Bitable v1 异步接口的业务友好封装。"""
 
-    def __init__(self, sdk_client: lark.Client) -> None:
+    def __init__(
+        self,
+        sdk_client: lark.Client,
+        *,
+        option_provider: RequestOptionProvider | None = None,
+        auth_mode: Literal["tenant", "user"] = "tenant",
+    ) -> None:
         self._sdk_client = sdk_client
+        self._option_provider = option_provider
+        self._auth_mode = auth_mode
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "FeishuClient":
         """从应用配置创建官方 SDK 客户端。"""
 
-        return cls(build_lark_client(settings))
+        sdk_client = build_lark_client(settings)
+        if settings.feishu_auth_mode == "user":
+            oauth_service = FeishuOAuthService.from_settings(settings, sdk_client)
+            return cls(
+                sdk_client,
+                option_provider=oauth_service.get_request_option,
+                auth_mode="user",
+            )
+        return cls(sdk_client)
 
     async def get_document(self, document_id: str) -> Document:
         request = GetDocumentRequest.builder().document_id(document_id).build()
-        data = await self._call(lambda: self._sdk_client.docx.v1.document.aget(request))
+        data = await self._call(
+            lambda option: self._sdk_client.docx.v1.document.aget(request, option)
+        )
         document = getattr(data, "document", None)
         if not isinstance(document, Document):
             raise FeishuAPIError("飞书读取文档成功，但响应中缺少 document")
         return document
+
+    async def resolve_document_id(self, document_reference: str) -> str:
+        """把原始 Docx ID、Docx URL 或 Wiki URL 统一解析为文档 ID。"""
+
+        reference = document_reference.strip()
+        if not reference:
+            raise FeishuAPIError("飞书文档 ID 或 URL 不能为空")
+        if "://" not in reference:
+            return reference
+
+        parsed = urlsplit(reference)
+        segments = [unquote(segment) for segment in parsed.path.split("/") if segment]
+        if len(segments) >= 2 and segments[-2] == "docx":
+            return segments[-1]
+        if len(segments) >= 2 and segments[-2] == "wiki":
+            return await self._resolve_wiki_document_id(segments[-1])
+        raise FeishuAPIError("不支持该飞书链接，请使用 Docx 或知识库 Wiki 文档链接")
+
+    async def _resolve_wiki_document_id(self, node_token: str) -> str:
+        request = GetNodeSpaceRequest.builder().token(node_token).build()
+        data = await self._call(
+            lambda option: self._sdk_client.wiki.v2.space.aget_node(request, option)
+        )
+        node = getattr(data, "node", None)
+        if not isinstance(node, Node) or not node.obj_token:
+            raise FeishuAPIError("飞书知识库节点响应缺少 docx 文档 token")
+        if node.obj_type != "docx":
+            raise FeishuAPIError(
+                f"飞书知识库节点不是 Docx 文档（obj_type={node.obj_type or 'unknown'}）"
+            )
+        return node.obj_token
 
     async def list_document_blocks(
         self,
@@ -89,15 +143,13 @@ class FeishuClient:
         page_size: int,
         page_token: str | None = None,
     ) -> tuple[list[Block], bool, str | None]:
-        builder = (
-            ListDocumentBlockRequest.builder()
-            .document_id(document_id)
-            .page_size(page_size)
-        )
+        builder = ListDocumentBlockRequest.builder().document_id(document_id).page_size(page_size)
         if page_token:
             builder.page_token(page_token)
         request = builder.build()
-        data = await self._call(lambda: self._sdk_client.docx.v1.document_block.alist(request))
+        data = await self._call(
+            lambda option: self._sdk_client.docx.v1.document_block.alist(request, option)
+        )
         items = getattr(data, "items", None) or []
         if not isinstance(items, list) or any(not isinstance(item, Block) for item in items):
             raise FeishuAPIError("飞书文档 blocks 响应格式不正确")
@@ -106,7 +158,9 @@ class FeishuClient:
     async def create_document(self, title: str) -> Document:
         body = CreateDocumentRequestBody.builder().title(title).build()
         request = CreateDocumentRequest.builder().request_body(body).build()
-        data = await self._call(lambda: self._sdk_client.docx.v1.document.acreate(request))
+        data = await self._call(
+            lambda option: self._sdk_client.docx.v1.document.acreate(request, option)
+        )
         document = getattr(data, "document", None)
         if not isinstance(document, Document):
             raise FeishuAPIError("飞书创建文档成功，但响应中缺少 document")
@@ -121,10 +175,7 @@ class FeishuClient:
         index: int,
     ) -> list[Block]:
         body = (
-            CreateDocumentBlockChildrenRequestBody.builder()
-            .children(children)
-            .index(index)
-            .build()
+            CreateDocumentBlockChildrenRequestBody.builder().children(children).index(index).build()
         )
         request = (
             CreateDocumentBlockChildrenRequest.builder()
@@ -134,7 +185,10 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.docx.v1.document_block_children.acreate(request)
+            lambda option: self._sdk_client.docx.v1.document_block_children.acreate(
+                request,
+                option,
+            )
         )
         created = getattr(data, "children", None) or []
         if not isinstance(created, list) or any(not isinstance(item, Block) for item in created):
@@ -163,7 +217,10 @@ class FeishuClient:
             .build()
         )
         await self._call(
-            lambda: self._sdk_client.docx.v1.document_block_children.abatch_delete(request)
+            lambda option: self._sdk_client.docx.v1.document_block_children.abatch_delete(
+                request,
+                option,
+            )
         )
 
     async def list_bitable_fields(
@@ -184,7 +241,7 @@ class FeishuClient:
             builder.page_token(page_token)
         request = builder.build()
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_field.alist(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_field.alist(request, option)
         )
         items = getattr(data, "items", None) or []
         if not isinstance(items, list) or any(
@@ -208,7 +265,7 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_record.acreate(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_record.acreate(request, option)
         )
         created = getattr(data, "record", None)
         if not isinstance(created, AppTableRecord):
@@ -236,7 +293,7 @@ class FeishuClient:
             builder.filter(filter_expression)
         request = builder.build()
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_record.alist(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_record.alist(request, option)
         )
         items = getattr(data, "items", None) or []
         if not isinstance(items, list) or any(
@@ -268,7 +325,7 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_record.aupdate(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_record.aupdate(request, option)
         )
         updated = getattr(data, "record", None)
         if not isinstance(updated, AppTableRecord):
@@ -283,9 +340,7 @@ class FeishuClient:
         formula_expression: str,
     ) -> AppTableField:
         field_property = (
-            AppTableFieldProperty.builder()
-            .formula_expression(formula_expression)
-            .build()
+            AppTableFieldProperty.builder().formula_expression(formula_expression).build()
         )
         field = (
             AppTableField.builder()
@@ -302,7 +357,7 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_field.acreate(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_field.acreate(request, option)
         )
         created = getattr(data, "field", None)
         if not isinstance(created, AppTableField):
@@ -325,7 +380,7 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_table_view.acreate(request)
+            lambda option: self._sdk_client.bitable.v1.app_table_view.acreate(request, option)
         )
         created = getattr(data, "view", None)
         if not isinstance(created, AppTableView):
@@ -349,7 +404,7 @@ class FeishuClient:
             builder.page_token(page_token)
         request = builder.build()
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_dashboard.alist(request)
+            lambda option: self._sdk_client.bitable.v1.app_dashboard.alist(request, option)
         )
         dashboards = getattr(data, "dashboards", None) or []
         if not isinstance(dashboards, list) or any(
@@ -379,7 +434,7 @@ class FeishuClient:
             .build()
         )
         data = await self._call(
-            lambda: self._sdk_client.bitable.v1.app_dashboard.acopy(request)
+            lambda option: self._sdk_client.bitable.v1.app_dashboard.acopy(request, option)
         )
         copied_block_id = getattr(data, "block_id", None)
         copied_name = getattr(data, "name", None)
@@ -389,19 +444,29 @@ class FeishuClient:
             raise FeishuAPIError("飞书复制 Bitable 仪表盘成功，但响应中缺少 name")
         return copied_block_id, copied_name
 
-    async def _call(self, operation: Callable[[], Awaitable[ResponseT]]) -> Any:
+    async def _call(
+        self,
+        operation: Callable[[RequestOption | None], Awaitable[ResponseT]],
+    ) -> Any:
         try:
-            response = await operation()
+            option = await self._option_provider() if self._option_provider else None
+            response = await operation(option)
+        except FeishuAuthError:
+            raise
         except AUTH_EXCEPTIONS as exc:
-            raise FeishuAuthError(
-                "飞书鉴权失败，请检查 FEISHU_APP_ID 和 FEISHU_APP_SECRET"
-            ) from exc
+            raise FeishuAuthError(self._auth_error_message()) from exc
         except Exception as exc:
             raise FeishuAPIError("飞书官方 SDK 请求失败，请检查网络后重试") from exc
 
         if not response.success():  # type: ignore[attr-defined]
             code = getattr(response, "code", None)
             message = ERROR_MESSAGES.get(code)
+            if code in {99991663, 99991668} and self._auth_mode == "user":
+                message = "飞书用户访问凭证无效或已过期，请执行 `uv run feishu-mcp login` 重新授权"
+            if code == 91403 and self._auth_mode == "user":
+                message = "当前飞书用户缺少文档权限，请检查用户授权 scope"
+            if code == 1770032 and self._auth_mode == "user":
+                message = "飞书文档不存在，或当前授权用户无权访问"
             if message is None:
                 detail = getattr(response, "msg", None) or "未知错误"
                 message = f"飞书 API 调用失败（code={code}）：{detail}"
@@ -411,3 +476,8 @@ class FeishuClient:
         if data is None:
             raise FeishuAPIError("飞书 API 响应缺少 data")
         return data
+
+    def _auth_error_message(self) -> str:
+        if self._auth_mode == "user":
+            return "飞书用户鉴权失败，请执行 `uv run feishu-mcp login` 重新授权"
+        return "飞书鉴权失败，请检查 FEISHU_APP_ID 和 FEISHU_APP_SECRET"

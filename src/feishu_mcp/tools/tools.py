@@ -21,7 +21,7 @@ LOGGER = logging.getLogger(__name__)
 
 DocumentId = Annotated[
     str,
-    Field(min_length=1, max_length=256, description="飞书 Docx 文档 ID"),
+    Field(min_length=1, max_length=4096, description="飞书 Docx ID、Docx URL 或 Wiki URL"),
 ]
 DocumentTitle = Annotated[
     str,
@@ -237,9 +237,7 @@ def create_mcp_server(
 
     @server.tool(
         name="append_feishu_document",
-        description=(
-            "在飞书文档末尾追加 Markdown、普通文本或表格；不会删除、覆盖或清空已有内容。"
-        ),
+        description=("在飞书文档末尾追加 Markdown、普通文本或表格；不会删除、覆盖或清空已有内容。"),
     )
     async def append_feishu_document(
         document_id: DocumentId,
@@ -439,9 +437,7 @@ def create_mcp_server(
 
     @server.tool(
         name="copy_feishu_bitable_dashboard",
-        description=(
-            "通过官方复制接口从已有仪表盘模板创建新仪表盘，并复制模板中的全部组件。"
-        ),
+        description=("通过官方复制接口从已有仪表盘模板创建新仪表盘，并复制模板中的全部组件。"),
     )
     async def copy_feishu_bitable_dashboard(
         app_token: BitableToken,

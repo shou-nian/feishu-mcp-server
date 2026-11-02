@@ -19,6 +19,9 @@ class FakeFeishuClient:
         self.block_pages: list[tuple[list[Block], bool, str | None]] = []
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
+    async def resolve_document_id(self, document_reference: str) -> str:
+        return document_reference
+
     async def get_document(self, document_id: str) -> Document:
         self.calls.append(("get_document", (document_id,), {}))
         return self.document
@@ -186,16 +189,8 @@ def test_update_document_replaces_root_children() -> None:
         (
             [
                 Block.builder().block_id("doc1").block_type(1).build(),
-                Block.builder()
-                .block_id("old1")
-                .parent_id("doc1")
-                .block_type(2)
-                .build(),
-                Block.builder()
-                .block_id("nested")
-                .parent_id("old1")
-                .block_type(2)
-                .build(),
+                Block.builder().block_id("old1").parent_id("doc1").block_type(2).build(),
+                Block.builder().block_id("nested").parent_id("old1").block_type(2).build(),
             ],
             False,
             None,
