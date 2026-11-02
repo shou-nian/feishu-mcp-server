@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from lark_oapi.core.exception import AccessTokenException
 
 from feishu_mcp.feishu.errors import FeishuAuthError
 from feishu_mcp.feishu.oauth import FeishuOAuthService
@@ -101,6 +102,19 @@ def test_exchange_code_saves_token(tmp_path: Path) -> None:
             "scope": "docx:document wiki:wiki offline_access",
         }
     ]
+
+
+def test_exchange_code_reports_sdk_error_details(tmp_path: Path) -> None:
+    sdk_error = AccessTokenException(400, 20027, "invalid_scope", "scope not granted")
+    access_token = FakeAccessToken(exchange=sdk_error)
+    service = _service(
+        access_token,
+        TokenStore(tmp_path / "tokens.json"),
+        FakeClock(1000),
+    )
+
+    with pytest.raises(FeishuAuthError, match=r"HTTP 400，code=20027，scope not granted"):
+        service.exchange_authorization_code("authorization-code")
 
 
 def test_expiring_access_token_is_refreshed_and_new_refresh_token_is_saved(

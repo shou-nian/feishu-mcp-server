@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import lark_oapi as lark
+from lark_oapi.core.exception import AccessTokenException, ClientAssertionException
 from lark_oapi.core.model import RequestOption
 
 from feishu_mcp.config.settings import Settings
@@ -79,6 +80,8 @@ class FeishuOAuthService:
                 redirect_uri=self._redirect_uri,
                 scope=" ".join(self._scopes),
             )
+        except (AccessTokenException, ClientAssertionException) as exc:
+            raise FeishuAuthError(f"飞书用户授权换票失败：{_oauth_error_detail(exc)}") from exc
         except Exception as exc:
             raise FeishuAuthError("飞书用户授权失败，请重新执行 `uv run feishu-mcp login`") from exc
         token = self._token_from_response(response, previous=None)
@@ -171,3 +174,12 @@ class FeishuOAuthService:
 
 def _request_option(access_token: str) -> RequestOption:
     return RequestOption.builder().user_access_token(access_token).build()
+
+
+def _oauth_error_detail(exc: Exception) -> str:
+    if isinstance(exc, AccessTokenException):
+        detail = exc.error_description or exc.error or "未知错误"
+        return f"HTTP {exc.status_code}，code={exc.code}，{detail}"
+    if isinstance(exc, ClientAssertionException):
+        return f"code={exc.code}，{exc.msg}"
+    return "飞书 OAuth 服务请求失败"
