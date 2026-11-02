@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         validation_alias="FEISHU_REDIRECT_URI",
     )
     feishu_user_scopes: str = Field(
-        default="docx:document:readonly wiki:wiki:readonly offline_access",
+        default="docx:document wiki:wiki:readonly bitable:app offline_access",
         min_length=1,
         validation_alias="FEISHU_USER_SCOPES",
     )

@@ -74,7 +74,7 @@ user 模式启动示例：
 ```dotenv
 FEISHU_AUTH_MODE=user
 FEISHU_REDIRECT_URI=http://127.0.0.1:8765/callback
-FEISHU_USER_SCOPES=docx:document:readonly wiki:wiki:readonly offline_access
+FEISHU_USER_SCOPES=docx:document wiki:wiki:readonly bitable:app offline_access
 ```
 
 授权成功后，Server 会在 access token 到期前 5 分钟自动刷新；刷新后的新 `refresh_token` 会立即覆盖保存。refresh token 过期或 token 文件损坏时，Tool 会返回“请执行 `uv run feishu-mcp login` 重新授权”，不会向 MCP Client 返回 traceback。
@@ -245,9 +245,9 @@ https://example.feishu.cn/base/{app_token}?table={table_id}
 uv sync
 ```
 
-tenant 模式需要开通应用身份权限，并将目标文档/多维表格授权给应用。user 模式需要在开发者后台申请对应的**用户身份权限**，默认只读最小集为 `docx:document:readonly`、`wiki:wiki:readonly`、`offline_access`；如需读取 Bitable，再添加 `bitable:app:readonly`，如需按关键词搜索云空间文档，再添加 `drive:drive:readonly`。scope 的实际 key 以后台展示为准，并在安全设置中登记 `FEISHU_REDIRECT_URI`，修改权限后发布新版本。
+tenant 模式需要开通应用身份权限，并将目标文档/多维表格授权给应用。user 模式需要在开发者后台申请对应的**用户身份权限**。当前默认 scope 为 `docx:document wiki:wiki:readonly bitable:app offline_access`，允许以授权用户身份编辑本人可编辑的 Docx、读取 Wiki 并写入 Bitable；如果只需要只读能力，推荐改为 `docx:document:readonly wiki:wiki:readonly offline_access`，需要读取 Bitable 时再添加 `bitable:app:readonly`。如需按关键词搜索云空间文档，再添加 `drive:drive:readonly`。scope 的实际 key 以后台展示为准，并在安全设置中登记 `FEISHU_REDIRECT_URI`，修改权限后发布新版本。
 
-只读 scope 会从飞书侧限制写操作。当前默认配置下，创建、更新、追加文档及 Bitable 写工具因缺少写权限而失败，这是预期的安全行为；本配置面向“只读本人可访问文档”的场景。若需要 Bitable 只读能力，请额外申请 `bitable:app:readonly` 后重新执行登录。
+scope 会同时限制功能和数据操作范围。默认配置下，写入仍要求授权用户本人对目标文档或多维表格有编辑权限；缺少对应的用户身份 scope 时，飞书会拒绝操作并返回权限错误。
 
 ## 配置
 
@@ -266,7 +266,7 @@ FEISHU_APP_SECRET=xxxxx
 | --- | --- | --- |
 | `FEISHU_AUTH_MODE` | `tenant` | 鉴权模式：`tenant` 或 `user` |
 | `FEISHU_REDIRECT_URI` | `http://127.0.0.1:8765/callback` | user 模式 OAuth 回调地址，必须与开发者后台登记值一致 |
-| `FEISHU_USER_SCOPES` | `docx:document:readonly wiki:wiki:readonly offline_access` | user 模式默认只读权限，空格分隔 |
+| `FEISHU_USER_SCOPES` | `docx:document wiki:wiki:readonly bitable:app offline_access` | user 模式默认可读写权限，空格分隔 |
 | `FEISHU_TOKEN_FILE` | `~/.feishu-mcp/tokens.json` | 用户 token 文件，建议保持在仓库外 |
 | `FEISHU_DOCUMENT_URL_BASE` | `https://feishu.cn/docx` | 创建结果中的文档 URL 前缀；私有化域名可覆盖 |
 | `FEISHU_REQUEST_TIMEOUT` | `15` | HTTP 超时秒数 |
