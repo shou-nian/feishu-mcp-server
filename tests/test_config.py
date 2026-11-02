@@ -30,10 +30,8 @@ def test_app_credentials_are_read_from_environment(monkeypatch: pytest.MonkeyPat
     assert settings.feishu_app_secret.get_secret_value() == "secret"
     assert settings.feishu_auth_mode == "tenant"
     assert settings.user_scope_list == [
-        "docx:document",
-        "bitable:app",
-        "wiki:wiki",
-        "drive:drive",
+        "docx:document:readonly",
+        "wiki:wiki:readonly",
         "offline_access",
     ]
 
@@ -45,7 +43,10 @@ def test_user_auth_settings_are_read_from_environment(
     monkeypatch.setenv("FEISHU_APP_SECRET", "secret")
     monkeypatch.setenv("FEISHU_AUTH_MODE", "user")
     monkeypatch.setenv("FEISHU_REDIRECT_URI", "http://127.0.0.1:9876/callback")
-    monkeypatch.setenv("FEISHU_USER_SCOPES", "docx:document wiki:wiki offline_access")
+    monkeypatch.setenv(
+        "FEISHU_USER_SCOPES",
+        "docx:document:readonly wiki:wiki:readonly offline_access",
+    )
     monkeypatch.setenv("FEISHU_TOKEN_FILE", "~/custom-tokens.json")
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
@@ -53,7 +54,11 @@ def test_user_auth_settings_are_read_from_environment(
     assert settings.feishu_auth_mode == "user"
     assert settings.feishu_redirect_uri == "http://127.0.0.1:9876/callback"
     assert settings.feishu_token_file == Path("~/custom-tokens.json").expanduser()
-    assert settings.user_scope_list == ["docx:document", "wiki:wiki", "offline_access"]
+    assert settings.user_scope_list == [
+        "docx:document:readonly",
+        "wiki:wiki:readonly",
+        "offline_access",
+    ]
 
 
 def test_invalid_auth_mode_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

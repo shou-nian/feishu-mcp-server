@@ -390,3 +390,11 @@ def test_sdk_api_error_is_user_friendly() -> None:
 
     with pytest.raises(FeishuAPIError, match="文档不存在"):
         asyncio.run(client.get_document("missing"))
+
+
+def test_readonly_scope_permission_error_is_user_friendly() -> None:
+    sdk_call = AsyncMock(return_value=_response(code=99991679, msg="permission denied"))
+    client = FeishuClient(_sdk_client(get_document=sdk_call))  # type: ignore[arg-type]
+
+    with pytest.raises(FeishuAPIError, match="FEISHU_USER_SCOPES"):
+        asyncio.run(client.get_document("doc1"))

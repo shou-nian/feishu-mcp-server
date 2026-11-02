@@ -168,7 +168,7 @@ user 模式额外配置：
 
 ```
 FEISHU_REDIRECT_URI=http://127.0.0.1:8765/callback
-FEISHU_USER_SCOPES=docx:document bitable:app wiki:wiki drive:drive offline_access
+FEISHU_USER_SCOPES=docx:document:readonly wiki:wiki:readonly offline_access
 FEISHU_TOKEN_FILE=~/.feishu-mcp/tokens.json
 ```
 
